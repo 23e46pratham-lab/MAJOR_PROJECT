@@ -401,12 +401,7 @@ const UploadTab: React.FC<{ onDatasetReady: (data: TelemetryData[], resp: Driver
         throttle: Number(row[idx.throttle]) || 0,
         engineLoad: 0, // Not in dataset
         coolantTemp: Number(row[idx.coolant]) || 0,
-        oilTemp: 0, // Not in dataset
         intakeAirTemp: Number(row[idx.iat]) || 0,
-        shortTermFuelTrim: 0,
-        longTermFuelTrim: 0,
-        o2Voltage: 0,
-        brakeSwitch: false,
         dtcs: [],
         timestamp: Date.now(),
       }));
@@ -497,7 +492,6 @@ const OverviewTab: React.FC<{
         <HUDGauge value={telemetry.coolantTemp} max={130} color="var(--amber)" unit="°C"
           warning={100} critical={115} size={180} />
         <div className="mt-4 grid grid-cols-2 gap-4 w-full">
-          <MiniStat label="OIL" value={telemetry.oilTemp > 0 ? `${telemetry.oilTemp}°C` : "N/A"} color="var(--amber)" />
           <MiniStat label="IAT" value={`${telemetry.intakeAirTemp}°C`} color="var(--amber)" />
         </div>
       </div>
@@ -521,8 +515,6 @@ const OverviewTab: React.FC<{
         <div className="space-y-2 flex-1">
           {[
             { label: "ENGINE", val: Math.min(100, 100 - (telemetry.coolantTemp > 100 ? 20 : 0)), color: "var(--green)" },
-            { label: "FUEL SYS", val: Math.min(100, 100 - Math.abs(telemetry.shortTermFuelTrim) * 3), color: "var(--cyan)" },
-            { label: "O2 SENSOR", val: Math.round(telemetry.o2Voltage * 111), color: "var(--purple)" },
             { label: "OVERALL", val: health.score, color: health.status === "Healthy" ? "var(--green)" : health.status === "Warning" ? "var(--amber)" : "var(--red)" },
           ].map(({ label, val, color }) => (
             <div key={label}>
@@ -571,27 +563,6 @@ const OverviewTab: React.FC<{
           <LiveChart data={history.map((h, i) => ({ t: i, v: calculateMileage(h) }))}
             color="var(--green)" label="MPG" maxPoints={60} height={80} />
         </div>
-        {/* Fuel trim indicators */}
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          <div>
-            <div className="hud-label text-[9px] mb-1">STFT</div>
-            <div className="text-sm font-bold" style={{
-              fontFamily: "Share Tech Mono",
-              color: Math.abs(telemetry.shortTermFuelTrim) > 10 ? "var(--red)" : "var(--cyan)"
-            }}>
-              {telemetry.shortTermFuelTrim > 0 ? "+" : ""}{telemetry.shortTermFuelTrim.toFixed(1)}%
-            </div>
-          </div>
-          <div>
-            <div className="hud-label text-[9px] mb-1">LTFT</div>
-            <div className="text-sm font-bold" style={{
-              fontFamily: "Share Tech Mono",
-              color: Math.abs(telemetry.longTermFuelTrim) > 8 ? "var(--amber)" : "var(--cyan)"
-            }}>
-              {telemetry.longTermFuelTrim > 0 ? "+" : ""}{telemetry.longTermFuelTrim.toFixed(1)}%
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* ── Driver Behavior (col 5-8, row 4-6) */}
@@ -634,7 +605,6 @@ const OverviewTab: React.FC<{
               {[
                 { label: "THROTTLE RESPONSE", val: telemetry.throttle, max: 100 },
                 { label: "RPM VARIANCE", val: Math.min(100, (telemetry.rpm / 7000) * 100), max: 100 },
-                { label: "BRAKE INTENSITY", val: telemetry.brakeSwitch ? 80 : 10, max: 100 },
               ].map(({ label, val, max }) => (
                 <div key={label}>
                   <div className="flex justify-between mb-1">
@@ -684,10 +654,9 @@ const OverviewTab: React.FC<{
         )}
 
         <div className="mt-auto pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-          <div className="grid grid-cols-3 gap-2">
-            <MiniStat label="O2 VOLT" value={`${telemetry.o2Voltage.toFixed(2)}V`} color="var(--cyan)" />
+          <div className="grid grid-cols-2 gap-2">
+            <MiniStat label="ENGINE LOAD" value={`${telemetry.engineLoad}%`} color="var(--cyan)" />
             <MiniStat label="IAT" value={`${telemetry.intakeAirTemp}°C`} color="var(--amber)" />
-            <MiniStat label="BRAKE" value={telemetry.brakeSwitch ? "ON" : "OFF"} color={telemetry.brakeSwitch ? "var(--red)" : "var(--green)"} />
           </div>
         </div>
       </div>

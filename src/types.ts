@@ -18,12 +18,7 @@ export interface TelemetryData {
   throttle: number; // %
   engineLoad: number; // %
   coolantTemp: number; // °C
-  oilTemp: number; // °C
   intakeAirTemp: number; // °C
-  shortTermFuelTrim: number; // %
-  longTermFuelTrim: number; // %
-  o2Voltage: number; // V
-  brakeSwitch: boolean;
   dtcs: string[]; // Diagnostic Trouble Codes
   timestamp: number;
 }

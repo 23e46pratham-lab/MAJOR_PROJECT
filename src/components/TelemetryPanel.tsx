@@ -74,13 +74,8 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
           <ParamRow label="ENGINE LOAD" value={telemetry.engineLoad} unit="%" color="var(--amber)" pct={telemetry.engineLoad} alert={telemetry.engineLoad > 90} />
           <ParamRow label="THROTTLE POS" value={telemetry.throttle} unit="%" color="var(--cyan)" pct={telemetry.throttle} />
           <ParamRow label="COOLANT TEMP" value={telemetry.coolantTemp} unit="°C" color="var(--amber)" pct={(telemetry.coolantTemp / 130) * 100} alert={telemetry.coolantTemp > 105} />
-          <ParamRow label="OIL TEMP" value={telemetry.oilTemp} unit="°C" color="var(--amber)" pct={(telemetry.oilTemp / 150) * 100} alert={telemetry.oilTemp > 115} />
           <ParamRow label="INTAKE AIR" value={telemetry.intakeAirTemp} unit="°C" color="var(--cyan)" pct={(telemetry.intakeAirTemp / 60) * 100} />
           <ParamRow label="MASS AIR FLOW" value={telemetry.maf} unit="g/s" color="var(--green)" pct={(telemetry.maf / 30) * 100} />
-          <ParamRow label="O2 VOLTAGE" value={telemetry.o2Voltage.toFixed(2)} unit="V" color="var(--purple)" pct={(telemetry.o2Voltage / 1) * 100} />
-          <ParamRow label="ST FUEL TRIM" value={`${telemetry.shortTermFuelTrim > 0 ? "+" : ""}${telemetry.shortTermFuelTrim.toFixed(1)}`} unit="%" color={Math.abs(telemetry.shortTermFuelTrim) > 10 ? "var(--red)" : "var(--green)"} pct={50 + telemetry.shortTermFuelTrim * 2.5} alert={Math.abs(telemetry.shortTermFuelTrim) > 10} />
-          <ParamRow label="LT FUEL TRIM" value={`${telemetry.longTermFuelTrim > 0 ? "+" : ""}${telemetry.longTermFuelTrim.toFixed(1)}`} unit="%" color={Math.abs(telemetry.longTermFuelTrim) > 8 ? "var(--amber)" : "var(--green)"} pct={50 + telemetry.longTermFuelTrim * 2.5} />
-          <ParamRow label="BRAKE SW" value={telemetry.brakeSwitch ? "ACTIVE" : "OFF"} color={telemetry.brakeSwitch ? "var(--red)" : "var(--green)"} pct={telemetry.brakeSwitch ? 100 : 0} />
           <ParamRow label="EFFICIENCY" value={calculateMileage(telemetry)} unit="MPG" color="var(--green)" pct={(calculateMileage(telemetry) / 60) * 100} />
         </div>
       </div>
@@ -108,25 +103,10 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
           <div className="panel p-3" style={{ borderColor: "var(--border)" }}>
             <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-secondary)" }}>THERMAL MONITORING</div>
             <MultiLineChart
-              data={history.map((h, i) => ({ t: i, cool: h.coolantTemp, oil: h.oilTemp, iat: h.intakeAirTemp }))}
+              data={history.map((h, i) => ({ t: i, cool: h.coolantTemp, iat: h.intakeAirTemp }))}
               series={[
                 { key: "cool", color: "var(--amber)", label: "COOLANT" },
-                { key: "oil", color: "var(--red)", label: "OIL" },
                 { key: "iat", color: "var(--cyan)", label: "IAT" },
-              ]}
-              height={90} maxPoints={60}
-            />
-          </div>
-
-          {/* Fuel trim */}
-          <div className="panel p-3" style={{ borderColor: "var(--border)" }}>
-            <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-secondary)" }}>FUEL SYSTEM ANALYSIS</div>
-            <MultiLineChart
-              data={history.map((h, i) => ({ t: i, stft: h.shortTermFuelTrim, ltft: h.longTermFuelTrim, o2: h.o2Voltage * 10 }))}
-              series={[
-                { key: "stft", color: "var(--green)", label: "STFT" },
-                { key: "ltft", color: "var(--purple)", label: "LTFT" },
-                { key: "o2", color: "var(--amber)", label: "O2×10" },
               ]}
               height={90} maxPoints={60}
             />
@@ -160,12 +140,8 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
             chartData={hist("throttle")} />
           <MiniCard icon={Thermometer} label="COOLANT" value={`${telemetry.coolantTemp}°C`}
             color={telemetry.coolantTemp > 100 ? "var(--red)" : "var(--amber)"} chartData={hist("coolantTemp")} />
-          <MiniCard icon={Thermometer} label="OIL TEMP" value={`${telemetry.oilTemp}°C`}
-            color={telemetry.oilTemp > 110 ? "var(--red)" : "var(--amber)"} chartData={hist("oilTemp")} />
           <MiniCard icon={Wind} label="MAF" value={`${telemetry.maf}g/s`} color="var(--green)"
             chartData={hist("maf")} />
-          <MiniCard icon={Droplets} label="O2 VOLT" value={`${telemetry.o2Voltage.toFixed(2)}V`}
-            color="var(--purple)" chartData={hist("o2Voltage")} />
 
           {/* DTC status */}
           <div className="panel p-3 mt-1" style={{ borderColor: telemetry.dtcs.length > 0 ? "rgba(255,51,51,0.4)" : "var(--border)" }}>

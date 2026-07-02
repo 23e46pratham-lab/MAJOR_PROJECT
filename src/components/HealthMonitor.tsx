@@ -63,9 +63,7 @@ export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry,
     prev.length > 0 ? prev.reduce((a, h) => a + Number(h[key]), 0) / prev.length : Number(telemetry[key]);
 
   const systems = [
-    { label: "Engine Core", status: (telemetry.coolantTemp > 105 ? "critical" : telemetry.coolantTemp > 95 ? "warning" : "ok") as "ok" | "warning" | "critical", detail: `Coolant: ${telemetry.coolantTemp}°C · Oil: ${telemetry.oilTemp}°C` },
-    { label: "Fuel System", status: (Math.abs(telemetry.shortTermFuelTrim) > 10 ? "critical" : Math.abs(telemetry.shortTermFuelTrim) > 7 ? "warning" : "ok") as "ok" | "warning" | "critical", detail: `STFT: ${telemetry.shortTermFuelTrim.toFixed(1)}% · LTFT: ${telemetry.longTermFuelTrim.toFixed(1)}%` },
-    { label: "Oxygen Sensors", status: (telemetry.o2Voltage < 0.1 || telemetry.o2Voltage > 0.95 ? "warning" : "ok") as "ok" | "warning" | "critical", detail: `O2 voltage: ${telemetry.o2Voltage.toFixed(2)}V` },
+    { label: "Engine Core", status: (telemetry.coolantTemp > 105 ? "critical" : telemetry.coolantTemp > 95 ? "warning" : "ok") as "ok" | "warning" | "critical", detail: `Coolant: ${telemetry.coolantTemp}°C` },
     { label: "Air Intake", status: (telemetry.intakeAirTemp > 45 ? "warning" : "ok") as "ok" | "warning" | "critical", detail: `IAT: ${telemetry.intakeAirTemp}°C · MAF: ${telemetry.maf}g/s` },
     { label: "Drivetrain", status: (telemetry.rpm > 6000 ? "warning" : "ok") as "ok" | "warning" | "critical", detail: `RPM: ${telemetry.rpm} · Load: ${telemetry.engineLoad}%` },
     { label: "Fault Codes", status: (telemetry.dtcs.length > 0 ? "critical" : "ok") as "ok" | "warning" | "critical", detail: telemetry.dtcs.length > 0 ? telemetry.dtcs.join(", ") : "No active DTCs" },
@@ -169,7 +167,7 @@ export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry,
             <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>HEALTH SCORE TREND</div>
             <LiveChart
               data={history.map((h, i) => {
-                const score = Math.max(0, 95 - (h.coolantTemp > 105 ? 20 : 0) - (Math.abs(h.shortTermFuelTrim) > 8 ? 15 : 0) - (h.dtcs.length * 10));
+                const score = Math.max(0, 95 - (h.coolantTemp > 105 ? 20 : 0) - (h.dtcs.length * 10));
                 return { t: i, v: score };
               })}
               color={statusColor} label="Health" height={60} maxPoints={80}
@@ -185,11 +183,9 @@ export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry,
         </div>
         <div className="flex-1 overflow-y-auto scroll-area p-3 grid grid-cols-1 gap-2 content-start">
           <TrendIndicator label="COOLANT TEMP" current={telemetry.coolantTemp} prev={avgPrev("coolantTemp")} unit="°C" color="var(--amber)" />
-          <TrendIndicator label="OIL TEMP" current={telemetry.oilTemp} prev={avgPrev("oilTemp")} unit="°C" color="var(--amber)" />
           <TrendIndicator label="ENGINE RPM" current={telemetry.rpm} prev={avgPrev("rpm")} unit="rpm" color="var(--cyan)" />
           <TrendIndicator label="ENGINE LOAD" current={telemetry.engineLoad} prev={avgPrev("engineLoad")} unit="%" color="var(--amber)" />
           <TrendIndicator label="THROTTLE POS" current={telemetry.throttle} prev={avgPrev("throttle")} unit="%" color="var(--cyan)" />
-          <TrendIndicator label="O2 VOLTAGE" current={telemetry.o2Voltage * 100} prev={avgPrev("o2Voltage") * 100} unit="%" color="var(--purple)" />
 
           {/* Random Forest status */}
           <div className="mt-2 p-3" style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}>

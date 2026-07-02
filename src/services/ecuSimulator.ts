@@ -11,12 +11,7 @@ export function simulateECUData(prevData?: TelemetryData | null): TelemetryData 
       throttle: 0,
       engineLoad: 0,
       coolantTemp: 20,
-      oilTemp: 20,
       intakeAirTemp: 20,
-      shortTermFuelTrim: 0,
-      longTermFuelTrim: 0,
-      o2Voltage: 0,
-      brakeSwitch: false,
       dtcs: [],
       timestamp: now,
     };
@@ -26,16 +21,16 @@ export function simulateECUData(prevData?: TelemetryData | null): TelemetryData 
   let rpm = prevData ? prevData.rpm : 800;
   let vss = prevData ? prevData.vss : 0;
   let throttle = prevData ? prevData.throttle : 15;
-  let brakeSwitch = prevData ? prevData.brakeSwitch : false;
 
   // Randomly simulate driving states: Idle, Accelerating, Cruising, Braking
   const rand = Math.random();
+  let isBraking = false;
   
   if (rand < 0.05) { // Sudden change in state
-    brakeSwitch = Math.random() < 0.3;
+    isBraking = Math.random() < 0.3;
   }
 
-  if (brakeSwitch) {
+  if (isBraking) {
     vss = Math.max(0, vss - Math.random() * 5);
     rpm = Math.max(800, rpm - Math.random() * 200);
     throttle = Math.max(0, throttle - 5);
@@ -60,11 +55,7 @@ export function simulateECUData(prevData?: TelemetryData | null): TelemetryData 
   const engineLoad = Math.min(100, (rpm / 7000) * 100 + (throttle / 2));
   const maf = (rpm * engineLoad) / 1000 + Math.random() * 5;
   const coolantTemp = 85 + Math.sin(now / 100000) * 5;
-  const oilTemp = 90 + Math.sin(now / 120000) * 5;
   const intakeAirTemp = 25 + Math.random() * 5;
-  const shortTermFuelTrim = (Math.random() - 0.5) * 10;
-  const longTermFuelTrim = (Math.random() - 0.5) * 5;
-  const o2Voltage = 0.1 + Math.random() * 0.8;
 
   // Simulate DTCs occasionally
   const dtcs: string[] = [];
@@ -78,12 +69,7 @@ export function simulateECUData(prevData?: TelemetryData | null): TelemetryData 
     throttle: Math.round(throttle),
     engineLoad: Math.round(engineLoad),
     coolantTemp: Math.round(coolantTemp),
-    oilTemp: Math.round(oilTemp),
     intakeAirTemp: Math.round(intakeAirTemp),
-    shortTermFuelTrim: Number(shortTermFuelTrim.toFixed(2)),
-    longTermFuelTrim: Number(longTermFuelTrim.toFixed(2)),
-    o2Voltage: Number(o2Voltage.toFixed(2)),
-    brakeSwitch,
     dtcs,
     timestamp: now,
   };

@@ -5,11 +5,11 @@ import { TelemetryData, DriverBehavior } from "../types";
  * In a real app, this would use a library or a pre-trained model.
  */
 export function classifyDriverBehavior(data: TelemetryData): DriverBehavior {
-  const { vss, rpm, throttle, brakeSwitch } = data;
+  const { vss, rpm, throttle } = data;
 
   // Simple heuristic-based classification to simulate K-Means clusters
   // Harsh: High throttle, high RPM, or heavy braking at high speed
-  if (throttle > 75 || rpm > 4500 || (brakeSwitch && vss > 80)) {
+  if (throttle > 75 || rpm > 4500) {
     return "Harsh";
   }
 
