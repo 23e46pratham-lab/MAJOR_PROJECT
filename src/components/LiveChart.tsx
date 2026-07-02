@@ -49,7 +49,7 @@ export const LiveChart: React.FC<LiveChartProps> = ({
         {/* Grid lines */}
         {showGrid && [0.25, 0.5, 0.75].map((g) => (
           <line key={g} x1={0} y1={height * g} x2={100} y2={height * g}
-            stroke="rgba(255,255,255,0.04)" strokeWidth={0.5} />
+            stroke="var(--border)" strokeWidth={0.5} opacity={0.4} />
         ))}
 
         {/* Area fill */}
@@ -57,13 +57,12 @@ export const LiveChart: React.FC<LiveChartProps> = ({
           <>
             <defs>
               <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.25} />
-                <stop offset="100%" stopColor={color} stopOpacity={0.01} />
+                <stop offset="0%" stopColor={color} stopOpacity={0.15} />
+                <stop offset="100%" stopColor={color} stopOpacity={0.0} />
               </linearGradient>
             </defs>
             <path d={area} fill={`url(#grad-${label})`} />
-            <path d={path} fill="none" stroke={color} strokeWidth={1.5}
-              style={{ filter: `drop-shadow(0 0 3px ${color}88)` }} />
+            <path d={path} fill="none" stroke={color} strokeWidth={1.5} />
 
             {/* Latest point dot */}
             {pts.length > 0 && (() => {
@@ -72,8 +71,7 @@ export const LiveChart: React.FC<LiveChartProps> = ({
               const range = maxV - minV || 1;
               const y = height - ((last.v - minV) / range) * (height * 0.8) - height * 0.1;
               return (
-                <circle cx={x} cy={y} r={2} fill={color}
-                  style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
+                <circle cx={x} cy={y} r={2.5} fill={color} />
               );
             })()}
           </>
@@ -82,7 +80,7 @@ export const LiveChart: React.FC<LiveChartProps> = ({
 
       {/* Value overlay */}
       <div className="absolute top-1 right-1 flex items-baseline gap-1">
-        <span style={{ fontFamily: "Share Tech Mono", fontSize: 13, color, textShadow: `0 0 8px ${color}88` }}>
+        <span style={{ fontFamily: "Share Tech Mono", fontSize: 13, color }}>
           {typeof lastVal === "number" ? lastVal.toFixed(1) : lastVal}
         </span>
         {unit && <span className="hud-label" style={{ fontSize: 9, color: "var(--text-muted)" }}>{unit}</span>}
@@ -132,11 +130,10 @@ export const MultiLineChart: React.FC<MultiChartProps> = ({ data, series, height
       <svg width="100%" height="100%" viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
         {[0.25, 0.5, 0.75].map((g) => (
           <line key={g} x1={0} y1={height * g} x2={100} y2={height * g}
-            stroke="rgba(255,255,255,0.04)" strokeWidth={0.5} />
+            stroke="var(--border)" strokeWidth={0.5} opacity={0.4} />
         ))}
         {series.map(s => (
-          <path key={s.key} d={makePath(s.key)} fill="none" stroke={s.color} strokeWidth={1.5}
-            style={{ filter: `drop-shadow(0 0 2px ${s.color}66)` }} />
+          <path key={s.key} d={makePath(s.key)} fill="none" stroke={s.color} strokeWidth={1.5} />
         ))}
       </svg>
       <div className="absolute top-1 right-1 flex gap-3">
