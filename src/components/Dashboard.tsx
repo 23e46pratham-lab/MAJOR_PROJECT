@@ -7,27 +7,25 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Activity, Gauge, AlertTriangle, User,
-  Thermometer, Wind, Zap, Sparkles, Loader2,
-  LayoutDashboard, Wrench, MessageSquare, Radio,
+  Thermometer, Wind, Zap, Loader2,
+  LayoutDashboard, Wrench, Radio,
   ChevronRight, Power, Database, Cpu, Eye,
   TrendingUp, AlertCircle, CheckCircle, Settings,
   Fuel, Clock, Shield, BarChart3, Navigation2,
-  Wifi, WifiOff, RefreshCw, Bell, BellOff
+  Wifi, WifiOff, RefreshCw, Bell, BellOff, Sun, Moon
 } from "lucide-react";
 import { TelemetryData, DriverBehavior, HealthStatus, DriverPredictResponse } from "../types";
+import { MaintenanceScheduleItem, fetchMaintenanceSchedule } from "../services/apiService";
 import { simulateECUData } from "../services/ecuSimulator";
 import { classifyDriverBehavior } from "../logic/driverBehavior";
 import { analyzeVehicleHealth } from "../logic/mlHealth";
 import { calculateMileage } from "../logic/mileage";
-import { getAISuggestions } from "../services/geminiService";
 import { HUDGauge } from "./HUDGauge";
 import { TelemetryPanel } from "./TelemetryPanel";
 import { HealthMonitor } from "./HealthMonitor";
-import { ChatInterface } from "./ChatInterface";
 import { LiveChart } from "./LiveChart";
-import { DiagnosticsPanel } from "./DiagnosticsPanel";
 
-type Tab = "overview" | "telemetry" | "diagnostics" | "assistant" | "maintenance" | "upload";
+type Tab = "overview" | "telemetry" | "diagnostics" | "maintenance" | "upload";
 
 // ─── DATA SOURCE HOOK ──────────────────────────────────────────
 function useDataSource() {
@@ -53,7 +51,6 @@ export const Dashboard: React.FC = () => {
     score: 95, status: "Healthy", predictions: [], faults: [],
   });
   const [mileage, setMileage] = useState(0);
-  const [aiSuggestion, setAiSuggestion] = useState("Analyzing driving patterns...");
   const [apiResponse, setApiResponse] = useState<DriverPredictResponse | null>(null);
   const [dataset, setDataset] = useState<TelemetryData[]>([]);
   const [datasetIndex, setDatasetIndex] = useState(0);
@@ -63,9 +60,13 @@ export const Dashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [tripTime, setTripTime] = useState(0);
   const [totalDistance, setTotalDistance] = useState(0);
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [hasAlerts, setHasAlerts] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   const resetStates = useCallback(() => {
     const zeroed = simulateECUData(null);
@@ -85,12 +86,9 @@ export const Dashboard: React.FC = () => {
     setDatasetIndex(0);
     setApiResponse(null);
     tripStartRef.current = Date.now();
-    setAiSuggestion("System reset. Analyzing new data stream...");
-    lastAiUpdate.current = 0;
   }, []);
 
   const { source, setSource, isConnected, connectOBD } = useDataSource();
-  const lastAiUpdate = useRef(0);
   const tripStartRef = useRef(Date.now());
 
   // Handle data source switch
@@ -160,12 +158,6 @@ export const Dashboard: React.FC = () => {
     const alerts = newHealth.faults.length + (newHealth.status === "Critical" ? 1 : 0);
     setAlertCount(alerts);
     setHasAlerts(alerts > 0);
-
-    const now = Date.now();
-    if (now - lastAiUpdate.current > 30000 || (newHealth.status === "Critical" && health.status !== "Critical")) {
-      lastAiUpdate.current = now;
-      getAISuggestions(telemetry, newBehavior, newHealth).then(setAiSuggestion);
-    }
   }, [telemetry]);
 
   const formatTime = (s: number) => {
@@ -216,7 +208,6 @@ export const Dashboard: React.FC = () => {
             { id: "overview", icon: LayoutDashboard, label: "Overview" },
             { id: "telemetry", icon: Activity, label: "Telemetry" },
             { id: "diagnostics", icon: Shield, label: "Diagnostics" },
-            { id: "assistant", icon: Sparkles, label: "AI Assistant" },
             { id: "maintenance", icon: Wrench, label: "Maintenance" },
             { id: "upload", icon: Database, label: "Upload Dataset" },
           ] as { id: Tab; icon: any; label: string }[]).map(({ id, icon: Icon, label }) => (
@@ -292,7 +283,6 @@ export const Dashboard: React.FC = () => {
                 {activeTab === "overview" && "System Overview"}
                 {activeTab === "telemetry" && "Live Telemetry"}
                 {activeTab === "diagnostics" && "Diagnostics & Health"}
-                {activeTab === "assistant" && "AI Assistant"}
                 {activeTab === "maintenance" && "Maintenance Logs"}
                 {activeTab === "upload" && "Dataset Upload"}
               </div>
@@ -325,20 +315,15 @@ export const Dashboard: React.FC = () => {
               </span>
             </div>
 
-            {/* RPM live */}
-            <div className="px-3 py-1.5" style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}>
-              <span className="hud-label text-[9px]">RPM </span>
-              <span className="text-sm font-bold" style={{ fontFamily: "Share Tech Mono", color: telemetry.rpm > 5000 ? "var(--red)" : "var(--cyan)" }}>
-                {telemetry.rpm.toLocaleString()}
+            {/* Theme Toggle */}
+            <button 
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="px-3 py-1.5 flex items-center gap-2 transition-colors" 
+              style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}>
+              {theme === "dark" ? <Sun size={14} style={{ color: "var(--amber)" }} /> : <Moon size={14} style={{ color: "var(--cyan)" }} />}
+              <span className="hud-label text-[9px]">
+                {theme === "dark" ? "LIGHT MODE" : "DARK MODE"}
               </span>
-            </div>
-
-            <button onClick={() => setIsChatOpen(v => !v)}
-              className="btn-hud btn-cyan px-3 py-1.5 flex items-center gap-2 text-xs relative">
-              <MessageSquare size={14} />
-              AI CHAT
-              {hasAlerts && <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full flex items-center justify-center text-[8px] font-bold"
-                style={{ background: "var(--red)", color: "white" }}>{alertCount}</span>}
             </button>
           </div>
         </header>
@@ -358,9 +343,6 @@ export const Dashboard: React.FC = () => {
               {activeTab === "diagnostics" && (
                 <HealthMonitor health={health} telemetry={telemetry} history={history} />
               )}
-              {activeTab === "assistant" && (
-                <DiagnosticsPanel telemetry={telemetry} health={health} behavior={behavior} aiSuggestion={aiSuggestion} />
-              )}
               {activeTab === "maintenance" && (
                 <MaintenanceTab health={health} />
               )}
@@ -378,9 +360,6 @@ export const Dashboard: React.FC = () => {
           </AnimatePresence>
         </main>
       </div>
-
-      {/* Chat */}
-      <ChatInterface isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} telemetry={telemetry} />
     </div>
   );
 };
@@ -718,13 +697,15 @@ const OverviewTab: React.FC<{
 
 // ─── MAINTENANCE TAB ──────────────────────────────────────────
 const MaintenanceTab: React.FC<{ health: HealthStatus }> = ({ health }) => {
-  const items = [
-    { type: "Oil Change", due: "1,200 km", status: "upcoming", priority: "medium" },
-    { type: "Brake Inspection", due: "500 km", status: "urgent", priority: "high" },
-    { type: "Air Filter", due: "3,400 km", status: "ok", priority: "low" },
-    { type: "Tire Rotation", due: "2,100 km", status: "upcoming", priority: "medium" },
-    { type: "Spark Plugs", due: "12,000 km", status: "ok", priority: "low" },
-  ];
+  const [items, setItems] = useState<MaintenanceScheduleItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchMaintenanceSchedule().then(data => {
+      setItems(data);
+      setIsLoading(false);
+    });
+  }, []);
 
   return (
     <div className="h-full overflow-auto scroll-area p-6" style={{ background: "var(--bg-deep)" }}>
@@ -746,7 +727,17 @@ const MaintenanceTab: React.FC<{ health: HealthStatus }> = ({ health }) => {
           </div>
         )}
         <div className="space-y-2">
-          {items.map((item) => (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-10" style={{ color: "var(--cyan)" }}>
+              <Loader2 className="animate-spin" size={24} />
+              <span className="ml-3 text-sm" style={{ fontFamily: "Share Tech Mono" }}>FETCHING SCHEDULE FROM BACKEND...</span>
+            </div>
+          ) : items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10" style={{ color: "var(--text-muted)" }}>
+              <Database size={32} className="mb-2 opacity-50" />
+              <span className="text-sm" style={{ fontFamily: "Share Tech Mono" }}>NO MAINTENANCE SCHEDULE RETURNED FROM BACKEND API.</span>
+            </div>
+          ) : items.map((item) => (
             <div key={item.type} className="panel p-4 flex items-center justify-between"
               style={{ borderLeftColor: item.priority === "high" ? "var(--red)" : item.priority === "medium" ? "var(--amber)" : "var(--green)", borderLeftWidth: 2 }}>
               <div className="flex items-center gap-3">

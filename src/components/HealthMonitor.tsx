@@ -1,11 +1,10 @@
-import React, { useState } from "react";
+import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { HealthStatus, TelemetryData } from "../types";
 import {
-  AlertTriangle, CheckCircle, Activity, Zap, Brain,
+  AlertTriangle, CheckCircle, Activity, Zap,
   Loader2, X, Shield, TrendingUp, TrendingDown, Minus
 } from "lucide-react";
-import { performDeepAnalysis } from "../services/geminiService";
 import { LiveChart } from "./LiveChart";
 
 interface HealthMonitorProps {
@@ -57,8 +56,6 @@ const TrendIndicator: React.FC<{ current: number; prev: number; label: string; u
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────
 export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry, history }) => {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [deepAnalysis, setDeepAnalysis] = useState<string | null>(null);
 
   const statusColor = health.status === "Healthy" ? "var(--green)" : health.status === "Warning" ? "var(--amber)" : "var(--red)";
   const prev = history.slice(-20, -10);
@@ -74,15 +71,6 @@ export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry,
     { label: "Fault Codes", status: (telemetry.dtcs.length > 0 ? "critical" : "ok") as "ok" | "warning" | "critical", detail: telemetry.dtcs.length > 0 ? telemetry.dtcs.join(", ") : "No active DTCs" },
   ];
 
-  const handleDeepAnalysis = async () => {
-    setIsAnalyzing(true);
-    try {
-      const result = await performDeepAnalysis(telemetry, history);
-      setDeepAnalysis(result);
-    } catch (e) { console.error(e); }
-    finally { setIsAnalyzing(false); }
-  };
-
   return (
     <div className="h-full grid grid-cols-12 gap-0 overflow-hidden" style={{ background: "var(--bg-deep)" }}>
 
@@ -93,15 +81,6 @@ export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry,
         </div>
         <div className="flex-1 overflow-y-auto scroll-area px-4">
           {systems.map((s) => <SystemItem key={s.label} {...s} />)}
-        </div>
-
-        {/* Deep analysis button */}
-        <div className="p-4 border-t" style={{ borderColor: "var(--border)" }}>
-          <button onClick={handleDeepAnalysis} disabled={isAnalyzing}
-            className="btn-hud btn-cyan w-full py-3 flex items-center justify-center gap-2 text-xs disabled:opacity-50">
-            {isAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
-            {isAnalyzing ? "DEEP SCAN RUNNING..." : "INITIATE DEEP ANALYSIS"}
-          </button>
         </div>
       </div>
 
@@ -233,36 +212,6 @@ export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry,
           </div>
         </div>
       </div>
-
-      {/* Deep Analysis Modal */}
-      <AnimatePresence>
-        {deepAnalysis && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] flex items-center justify-center p-8"
-            style={{ background: "rgba(4,6,8,0.92)", backdropFilter: "blur(8px)" }}>
-            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }}
-              className="panel corner-bracket w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden glow-cyan"
-              style={{ borderColor: "rgba(0,212,255,0.3)" }}>
-              <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-                <div className="flex items-center gap-3">
-                  <Brain size={18} style={{ color: "var(--cyan)" }} />
-                  <div>
-                    <div className="hud-display text-base font-bold" style={{ color: "var(--cyan)" }}>DEEP SYSTEM ANALYSIS</div>
-                    <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>GEMINI 3.1 PRO · HIGH THINKING MODE</div>
-                  </div>
-                </div>
-                <button onClick={() => setDeepAnalysis(null)} className="p-1.5 hover:opacity-70 transition-opacity" style={{ color: "var(--text-muted)" }}>
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto scroll-area p-6 text-sm leading-relaxed whitespace-pre-wrap"
-                style={{ color: "var(--text-secondary)", fontFamily: "Barlow, sans-serif" }}>
-                {deepAnalysis}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

@@ -48,6 +48,22 @@
   --text-muted: #344D63;
 }
 
+:root[data-theme="light"] {
+  --cyan: #0088AA;
+  --cyan-dim: #006688;
+  --amber: #CC8800;
+  --red: #CC0000;
+  --green: #00AA55;
+  --purple: #7A3BBA;
+  --bg-deep: #F0F4F8;
+  --bg-panel: #FFFFFF;
+  --bg-card: #FAFCFF;
+  --border: #D1D9E6;
+  --text-primary: #1A2535;
+  --text-secondary: #4A6382;
+  --text-muted: #849AB3;
+}
+
 html, body {
   margin: 0;
   padding: 0;
