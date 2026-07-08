@@ -15,7 +15,14 @@ import {
   Wifi, WifiOff, RefreshCw, Bell, BellOff, Sun, Moon
 } from "lucide-react";
 import { TelemetryData, DriverBehavior, HealthStatus, DriverPredictResponse } from "../types";
-import { MaintenanceScheduleItem, fetchMaintenanceSchedule } from "../services/apiService";
+import {
+  MaintenanceScheduleItem,
+  fetchMaintenanceSchedule,
+  getWebSocketUrl,
+  mapSimulatedDataToTelemetry,
+  getApiBaseUrl,
+  setApiBaseUrl
+} from "../services/apiService";
 import { simulateECUData } from "../services/ecuSimulator";
 import { classifyDriverBehavior } from "../logic/driverBehavior";
 import { analyzeVehicleHealth } from "../logic/mlHealth";
@@ -32,14 +39,7 @@ function useDataSource() {
   const [source, setSource] = useState<"mock" | "obd" | "dataset">("mock");
   const [isConnected, setIsConnected] = useState(false);
 
-  // Real OBD-II connection placeholder
-  const connectOBD = useCallback(async () => {
-    console.log("[OBD] Attempting real data connection...");
-    setIsConnected(false); 
-    return null;
-  }, []);
-
-  return { source, setSource, isConnected, connectOBD };
+  return { source, setSource, isConnected, setIsConnected };
 }
 
 // ─── MAIN DASHBOARD ───────────────────────────────────────────
@@ -63,6 +63,9 @@ export const Dashboard: React.FC = () => {
   const [hasAlerts, setHasAlerts] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  const [savedUrl, setSavedUrl] = useState(getApiBaseUrl());
+  const [tempUrl, setTempUrl] = useState(getApiBaseUrl());
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -88,8 +91,9 @@ export const Dashboard: React.FC = () => {
     tripStartRef.current = Date.now();
   }, []);
 
-  const { source, setSource, isConnected, connectOBD } = useDataSource();
+  const { source, setSource, isConnected, setIsConnected } = useDataSource();
   const tripStartRef = useRef(Date.now());
+  const lastBackendHealthTimeRef = useRef<number>(0);
 
   // Handle data source switch
   const handleToggleDataSource = async () => {
@@ -99,10 +103,12 @@ export const Dashboard: React.FC = () => {
     resetStates();
     
     setSource(newSource);
-    
-    if (newSource === "obd") {
-      await connectOBD();
-    }
+  };
+
+  const handleSaveUrl = () => {
+    setApiBaseUrl(tempUrl);
+    setSavedUrl(tempUrl);
+    resetStates();
   };
 
   // Trip timer
@@ -114,8 +120,180 @@ export const Dashboard: React.FC = () => {
   // Telemetry loop — mock OR real OBD OR dataset
   useEffect(() => {
     if (source === "obd") {
-      console.log("[OBD] Waiting for real hardware data stream...");
-      return;
+      let ws: WebSocket | null = null;
+      let reconnectTimeout: any = null;
+      let pollInterval: any = null;
+      let isStopped = false;
+      let usePolling = false;
+
+      // Auto-detect list for HTTP polling fallback
+      const HTTP_CANDIDATE_PATHS = [
+        "/api/telemetry/demo/live",
+        "/api/vehicle/demo/live",
+        "/api/telemetry/1/live",
+        "/api/vehicle/1/live",
+        "/api/status",
+        "/api/live",
+        "/api/live-data"
+      ];
+      let successfulPollPath: string | null = null;
+
+      // Auto-detect list for WebSocket paths
+      const WS_CANDIDATE_PATHS = [
+        "/ws/vehicle/demo",
+        "/ws/vehicle/1",
+        "/ws/live",
+        "/api/ws/live"
+      ];
+      let wsPathIndex = 0;
+
+      const startPolling = () => {
+        if (pollInterval) clearInterval(pollInterval);
+        console.log("[OBD Fallback] Starting auto-detecting HTTP polling loop...");
+        
+        pollInterval = setInterval(async () => {
+          if (isStopped) return;
+          
+          const pathsToTry = successfulPollPath ? [successfulPollPath] : HTTP_CANDIDATE_PATHS;
+          let dataLoaded = false;
+          
+          for (const path of pathsToTry) {
+            try {
+              const response = await fetch(path);
+              if (!response.ok) continue;
+              
+              const resData = await response.json();
+              const payload = resData.data || resData;
+              
+              // Validate that the payload actually has telemetry-like keys
+              if (
+                payload &&
+                (payload.rpm !== undefined ||
+                 payload.speed !== undefined ||
+                 payload.vss !== undefined ||
+                 payload.engine_rpm !== undefined ||
+                 payload.vehicle_speed !== undefined)
+              ) {
+                const data = mapSimulatedDataToTelemetry(payload);
+                setTelemetry(data);
+                setHistory((h) => [...h.slice(-120), data]);
+                setTotalDistance((d) => d + data.vss / 3600);
+                setIsConnected(true);
+                
+                if (!successfulPollPath) {
+                  console.log(`[OBD Fallback] Auto-detected active HTTP endpoint: ${path}`);
+                  successfulPollPath = path;
+                }
+                dataLoaded = true;
+                break; // Break the loop since we got valid data
+              }
+            } catch (err) {
+              if (successfulPollPath) {
+                console.error(`[OBD Fallback] Poll error on ${path}:`, err);
+                successfulPollPath = null; // Reset to trigger discovery on next tick
+              }
+            }
+          }
+          
+          if (!dataLoaded) {
+            setIsConnected(false);
+          }
+        }, 800); // Poll every 800ms for high visual responsiveness
+      };
+
+      const connect = () => {
+        if (isStopped) return;
+        setIsConnected(false); // Connecting state
+        
+        // Safety timeout: if WS doesn't connect in 3.5 seconds, automatically fall back to HTTP polling
+        const fallbackTimer = setTimeout(() => {
+          if (!usePolling && (!ws || ws.readyState !== WebSocket.OPEN)) {
+            console.log("[WebSocket] Connection slow or failing, falling back to HTTP polling");
+            usePolling = true;
+            startPolling();
+          }
+        }, 3500);
+
+        const currentWsPath = WS_CANDIDATE_PATHS[wsPathIndex];
+        const wsUrl = getWebSocketUrl(currentWsPath);
+        console.log(`[WebSocket] Trying connection path [${wsPathIndex}]: ${wsUrl}`);
+        
+        try {
+          ws = new WebSocket(wsUrl);
+
+          ws.onopen = () => {
+            console.log(`[WebSocket] Connected successfully to live OBD stream path: ${currentWsPath}`);
+            clearTimeout(fallbackTimer);
+            setIsConnected(true);
+            usePolling = false;
+            if (pollInterval) {
+              clearInterval(pollInterval);
+              pollInterval = null;
+            }
+          };
+
+          ws.onmessage = (event) => {
+            try {
+              const resData = JSON.parse(event.data);
+              const payload = resData.data || resData;
+              const data = mapSimulatedDataToTelemetry(payload);
+              setTelemetry(data);
+              setHistory((h) => [...h.slice(-120), data]);
+              setTotalDistance((d) => d + data.vss / 3600);
+            } catch (err) {
+              console.error("[WebSocket] Error parsing data:", err);
+            }
+          };
+
+          ws.onerror = (err) => {
+            console.error(`[WebSocket] Error on path ${currentWsPath}:`, err);
+            clearTimeout(fallbackTimer);
+            if (!usePolling) {
+              usePolling = true;
+              startPolling();
+            }
+          };
+
+          ws.onclose = (event) => {
+            console.log(`[WebSocket] Connection closed for path ${currentWsPath}:`, event.code, event.reason);
+            clearTimeout(fallbackTimer);
+            
+            // Try next candidate WebSocket path on reconnect
+            wsPathIndex = (wsPathIndex + 1) % WS_CANDIDATE_PATHS.length;
+
+            if (!isStopped) {
+              if (!usePolling) {
+                usePolling = true;
+                startPolling();
+              }
+              // Attempt to reconnect WebSocket in 6 seconds
+              reconnectTimeout = setTimeout(connect, 6000);
+            }
+          };
+        } catch (e) {
+          console.error("[WebSocket] Synchronous connect error:", e);
+          clearTimeout(fallbackTimer);
+          wsPathIndex = (wsPathIndex + 1) % WS_CANDIDATE_PATHS.length;
+          if (!usePolling) {
+            usePolling = true;
+            startPolling();
+          }
+        }
+      };
+
+      connect();
+
+      return () => {
+        isStopped = true;
+        if (ws) {
+          try {
+            ws.close();
+          } catch (e) {}
+        }
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
+        if (pollInterval) clearInterval(pollInterval);
+        setIsConnected(false);
+      };
     }
 
     if (source === "dataset") {
@@ -143,22 +321,28 @@ export const Dashboard: React.FC = () => {
       });
     }, 500);
     return () => clearInterval(id);
-  }, [source, dataset]);
+  }, [source, dataset, setIsConnected, savedUrl]);
+
+  // Always use local heuristics and analytics to respect the strict "GET/WS only, no POST calls" policy.
+  useEffect(() => {
+    setApiResponse(null);
+  }, [source]);
 
   // Logic updates
   useEffect(() => {
     const newBehavior = classifyDriverBehavior(telemetry);
-    const newHealth = analyzeVehicleHealth(telemetry, history);
     const newMileage = calculateMileage(telemetry);
 
     setBehavior(newBehavior);
-    setHealth(newHealth);
     setMileage(newMileage);
 
+    const newHealth = analyzeVehicleHealth(telemetry, history);
+    setHealth(newHealth);
+    
     const alerts = newHealth.faults.length + (newHealth.status === "Critical" ? 1 : 0);
     setAlertCount(alerts);
     setHasAlerts(alerts > 0);
-  }, [telemetry]);
+  }, [telemetry, source]);
 
   const formatTime = (s: number) => {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -255,6 +439,37 @@ export const Dashboard: React.FC = () => {
               {source === "obd" ? <WifiOff size={11} /> : <Wifi size={11} />}
               {source === "obd" ? "DISCONNECT" : "CONNECT OBD"}
             </button>
+
+            {source === "obd" && (
+              <div className="mt-3 pt-3 border-t border-dashed" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
+                <label className="hud-label text-[9px] block mb-1" style={{ color: "var(--text-muted)" }}>TUNNEL/BACKEND URL</label>
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    value={tempUrl}
+                    onChange={(e) => setTempUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full bg-black/40 text-[11px] px-2 py-1 outline-none font-mono focus:border-amber-500/50"
+                    style={{
+                      border: "1px solid var(--border)",
+                      color: "var(--text-primary)",
+                    }}
+                  />
+                  <button
+                    onClick={handleSaveUrl}
+                    className="px-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] font-bold transition-all border"
+                    style={{ borderColor: "rgba(255,184,0,0.4)" }}
+                  >
+                    SAVE
+                  </button>
+                </div>
+                {!isConnected && (
+                  <p className="text-[9px] mt-1.5 text-amber-500/90 font-mono leading-normal">
+                    ⚠️ Connection error. Make sure your local FastAPI backend & Pinggy tunnel are active, or update the URL above.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
