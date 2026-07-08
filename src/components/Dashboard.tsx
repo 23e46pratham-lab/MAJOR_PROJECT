@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Activity, Gauge, AlertTriangle, User,
+  Activity, Gauge, AlertTriangle, User, Server,
   Thermometer, Wind, Zap, Loader2,
   LayoutDashboard, Wrench, Radio,
   ChevronRight, Power, Database, Cpu, Eye,
@@ -111,6 +111,25 @@ export const Dashboard: React.FC = () => {
     resetStates();
   };
 
+  const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
+
+  // Check backend health periodically
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const { checkBackendHealth } = await import("../services/apiService");
+        const healthy = await checkBackendHealth();
+        setIsBackendHealthy(healthy);
+      } catch (err) {
+        setIsBackendHealthy(false);
+      }
+    };
+    
+    checkHealth();
+    const interval = setInterval(checkHealth, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Trip timer
   useEffect(() => {
     const id = setInterval(() => setTripTime(Math.floor((Date.now() - tripStartRef.current) / 1000)), 1000);
@@ -132,7 +151,6 @@ export const Dashboard: React.FC = () => {
         "/api/vehicle/demo/live",
         "/api/telemetry/1/live",
         "/api/vehicle/1/live",
-        "/api/status",
         "/api/live",
         "/api/live-data"
       ];
@@ -203,7 +221,9 @@ export const Dashboard: React.FC = () => {
 
       const connect = () => {
         if (isStopped) return;
-        setIsConnected(false); // Connecting state
+        if (!usePolling) {
+          setIsConnected(false); // Connecting state
+        }
         
         // Safety timeout: if WS doesn't connect in 3.5 seconds, automatically fall back to HTTP polling
         const fallbackTimer = setTimeout(() => {
@@ -393,7 +413,6 @@ export const Dashboard: React.FC = () => {
             { id: "telemetry", icon: Activity, label: "Telemetry" },
             { id: "diagnostics", icon: Shield, label: "Diagnostics" },
             { id: "maintenance", icon: Wrench, label: "Maintenance" },
-            { id: "upload", icon: Database, label: "Upload Dataset" },
           ] as { id: Tab; icon: any; label: string }[]).map(({ id, icon: Icon, label }) => (
             <button
               key={id}
@@ -473,15 +492,30 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* User */}
+        {/* Backend Status */}
         <div className="px-3 py-3 border-t" style={{ borderColor: "var(--border)" }}>
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-none flex items-center justify-center" style={{ border: "1px solid var(--border)", background: "rgba(255,255,255,0.05)" }}>
-              <User size={14} style={{ color: "var(--text-muted)" }} />
+          <div className="flex items-center justify-between p-2 rounded" style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--border)" }}>
+            <div className="flex items-center gap-2">
+              <Server size={14} style={{ color: "var(--text-muted)" }} />
+              <div className="text-[10px] font-bold" style={{ color: "var(--text-secondary)", fontFamily: "Share Tech Mono" }}>BACKEND</div>
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium truncate" style={{ color: "var(--text-primary)", fontFamily: "Barlow Condensed" }}>GUEST DRIVER</div>
-              <div className="hud-label text-[9px] truncate" style={{ color: "var(--text-muted)" }}>OFFLINE MODE</div>
+            <div className="flex items-center gap-1.5">
+              {isBackendHealthy === null ? (
+                <>
+                  <div className="w-1.5 h-1.5 rounded-full bg-gray-500 animate-pulse" />
+                  <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>CHECKING</span>
+                </>
+              ) : isBackendHealthy ? (
+                <>
+                  <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--green)", boxShadow: "0 0 5px var(--green)" }} />
+                  <span className="text-[9px]" style={{ color: "var(--green)", fontFamily: "Share Tech Mono" }}>ONLINE</span>
+                </>
+              ) : (
+                <>
+                  <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--red)", boxShadow: "0 0 5px var(--red)" }} />
+                  <span className="text-[9px]" style={{ color: "var(--red)", fontFamily: "Share Tech Mono" }}>OFFLINE</span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -561,104 +595,9 @@ export const Dashboard: React.FC = () => {
               {activeTab === "maintenance" && (
                 <MaintenanceTab health={health} />
               )}
-              {activeTab === "upload" && (
-                <UploadTab 
-                  onDatasetReady={(data, resp) => {
-                    setDataset(data);
-                    setApiResponse(resp);
-                    setSource("dataset");
-                    setActiveTab("overview");
-                  }} 
-                />
-              )}
             </motion.div>
           </AnimatePresence>
         </main>
-      </div>
-    </div>
-  );
-};
-
-// ─── UPLOAD TAB ───────────────────────────────────────────────
-const UploadTab: React.FC<{ onDatasetReady: (data: TelemetryData[], resp: DriverPredictResponse) => void }> = ({ onDatasetReady }) => {
-  const [isUploading, setIsUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsUploading(true);
-    setError(null);
-
-    try {
-      const text = await file.text();
-      const lines = text.split("\n").filter(l => l.trim());
-      if (lines.length < 2) throw new Error("Dataset is too small");
-
-      const headers = lines[0].split(/[,\t]/).map(h => h.trim());
-      const rows = lines.slice(1).map(l => l.split(/[,\t]/).map(v => v.trim()));
-
-      // Map headers to indices
-      const idx = {
-        coolant: headers.findIndex(h => h.includes("Coolant")),
-        rpm: headers.findIndex(h => h.includes("RPM")),
-        vss: headers.findIndex(h => h.includes("Speed")),
-        iat: headers.findIndex(h => h.includes("Intake Air Temperature")),
-        maf: headers.findIndex(h => h.includes("Air Flow Rate")),
-        throttle: headers.findIndex(h => h.includes("Throttle")),
-      };
-
-      const telemetryData: TelemetryData[] = rows.map(row => ({
-        rpm: Number(row[idx.rpm]) || 0,
-        vss: Number(row[idx.vss]) || 0,
-        maf: Number(row[idx.maf]) || 0,
-        throttle: Number(row[idx.throttle]) || 0,
-        engineLoad: 0, // Not in dataset
-        coolantTemp: Number(row[idx.coolant]) || 0,
-        intakeAirTemp: Number(row[idx.iat]) || 0,
-        dtcs: [],
-        timestamp: Date.now(),
-      }));
-
-      // Prepare API request
-      const apiData = {
-        rpm_values: telemetryData.map(d => d.rpm),
-        speed_values: telemetryData.map(d => d.vss),
-        throttle_values: telemetryData.map(d => d.throttle),
-      };
-
-      const { predictDriverBehavior } = await import("../services/apiService");
-      const response = await predictDriverBehavior(apiData);
-
-      onDatasetReady(telemetryData, response);
-    } catch (err: any) {
-      setError(err.message || "Failed to process dataset");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  return (
-    <div className="h-full flex items-center justify-center p-6" style={{ background: "var(--bg-deep)" }}>
-      <div className="panel p-10 max-w-lg w-full text-center glow-cyan">
-        <Database size={48} className="mx-auto mb-6" style={{ color: "var(--cyan)" }} />
-        <h2 className="hud-display text-2xl mb-4">UPLOAD VEHICLE DATASET</h2>
-        <p className="text-sm mb-8" style={{ color: "var(--text-secondary)" }}>
-          Select a CSV or TSV file containing vehicle telemetry. The system will analyze the data using the backend ML model.
-        </p>
-        
-        <label className="btn-hud btn-cyan w-full py-4 cursor-pointer flex items-center justify-center gap-3">
-          {isUploading ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-          {isUploading ? "ANALYZING DATA..." : "SELECT DATASET FILE"}
-          <input type="file" className="hidden" accept=".csv,.tsv,.txt" onChange={handleFileUpload} disabled={isUploading} />
-        </label>
-
-        {error && (
-          <div className="mt-4 p-3 text-xs" style={{ border: "1px solid var(--red)", background: "rgba(255,51,51,0.06)", color: "var(--red)", fontFamily: "Share Tech Mono" }}>
-            ERROR: {error}
-          </div>
-        )}
       </div>
     </div>
   );

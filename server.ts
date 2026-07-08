@@ -60,6 +60,8 @@ async function startServer() {
     if (req.path === "/proxy-config") {
       return next();
     }
+    // Restore the original URL so the backend gets the /api prefix
+    req.url = req.originalUrl;
     proxyMiddleware(req, res, next);
   });
 
