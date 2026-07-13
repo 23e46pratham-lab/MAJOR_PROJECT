@@ -14,7 +14,7 @@ import {
   Fuel, Clock, Shield, BarChart3, Navigation2,
   Wifi, WifiOff, RefreshCw, Bell, BellOff, Sun, Moon
 } from "lucide-react";
-import { TelemetryData, DriverBehavior, HealthStatus, DriverPredictResponse } from "../types";
+import { TelemetryData, DriverBehavior, HealthStatus, DriverPredictResponse, ServiceCompanyDetails, RegisteredIssue } from "../types";
 import {
   MaintenanceScheduleItem,
   fetchMaintenanceSchedule,
@@ -78,6 +78,57 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     localStorage.setItem("obd_temp_unit", tempUnit);
   }, [tempUnit]);
+
+  const [serviceCompany, setServiceCompany] = useState<ServiceCompanyDetails>(() => {
+    try {
+      const stored = localStorage.getItem("obd_service_company");
+      if (stored) return JSON.parse(stored);
+    } catch (e) {}
+    return {
+      name: "Apex Auto Services",
+      email: "service@apexauto.com",
+      phone: "+1 (555) 019-2834",
+      address: "404 Performance Blvd, Detroit, MI"
+    };
+  });
+
+  const [registeredIssues, setRegisteredIssues] = useState<RegisteredIssue[]>(() => {
+    try {
+      const stored = localStorage.getItem("obd_registered_issues");
+      if (stored) return JSON.parse(stored);
+    } catch (e) {}
+    return [];
+  });
+
+  const [telegramToken, setTelegramToken] = useState<string>(() => {
+    return localStorage.getItem("obd_telegram_token") || "";
+  });
+  const [telegramChatId, setTelegramChatId] = useState<string>(() => {
+    return localStorage.getItem("obd_telegram_chat_id") || "";
+  });
+  const [telegramEnabled, setTelegramEnabled] = useState<boolean>(() => {
+    return localStorage.getItem("obd_telegram_enabled") === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("obd_service_company", JSON.stringify(serviceCompany));
+  }, [serviceCompany]);
+
+  useEffect(() => {
+    localStorage.setItem("obd_registered_issues", JSON.stringify(registeredIssues));
+  }, [registeredIssues]);
+
+  useEffect(() => {
+    localStorage.setItem("obd_telegram_token", telegramToken);
+  }, [telegramToken]);
+
+  useEffect(() => {
+    localStorage.setItem("obd_telegram_chat_id", telegramChatId);
+  }, [telegramChatId]);
+
+  useEffect(() => {
+    localStorage.setItem("obd_telegram_enabled", String(telegramEnabled));
+  }, [telegramEnabled]);
 
   const [savedUrl, setSavedUrl] = useState(getApiBaseUrl());
   const [tempUrl, setTempUrl] = useState(getApiBaseUrl());
@@ -554,7 +605,16 @@ export const Dashboard: React.FC = () => {
                 <HealthMonitor health={health} telemetry={telemetry} history={history} />
               )}
               {activeTab === "maintenance" && (
-                <MaintenanceTab health={health} />
+                <MaintenanceTab
+                  health={health}
+                  telemetry={telemetry}
+                  serviceCompany={serviceCompany}
+                  registeredIssues={registeredIssues}
+                  setRegisteredIssues={setRegisteredIssues}
+                  telegramToken={telegramToken}
+                  telegramChatId={telegramChatId}
+                  telegramEnabled={telegramEnabled}
+                />
               )}
               {activeTab === "settings" && (
                 <SettingsTab
@@ -576,6 +636,14 @@ export const Dashboard: React.FC = () => {
                       dtcs: prev.dtcs.includes(code) ? prev.dtcs : [...prev.dtcs, code]
                     }));
                   }}
+                  serviceCompany={serviceCompany}
+                  setServiceCompany={setServiceCompany}
+                  telegramToken={telegramToken}
+                  setTelegramToken={setTelegramToken}
+                  telegramChatId={telegramChatId}
+                  setTelegramChatId={setTelegramChatId}
+                  telegramEnabled={telegramEnabled}
+                  setTelegramEnabled={setTelegramEnabled}
                 />
               )}
             </motion.div>
@@ -811,69 +879,480 @@ const OverviewTab: React.FC<{
 };
 
 // ─── MAINTENANCE TAB ──────────────────────────────────────────
-const MaintenanceTab: React.FC<{ health: HealthStatus }> = ({ health }) => {
-  const [items, setItems] = useState<MaintenanceScheduleItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+const MaintenanceTab: React.FC<{
+  health: HealthStatus;
+  telemetry: TelemetryData;
+  serviceCompany: ServiceCompanyDetails;
+  registeredIssues: RegisteredIssue[];
+  setRegisteredIssues: React.Dispatch<React.SetStateAction<RegisteredIssue[]>>;
+  telegramToken: string;
+  telegramChatId: string;
+  telegramEnabled: boolean;
+}> = ({
+  health,
+  telemetry,
+  serviceCompany,
+  registeredIssues,
+  setRegisteredIssues,
+  telegramToken,
+  telegramChatId,
+  telegramEnabled,
+}) => {
+  // Form states
+  const [description, setDescription] = useState("");
+  const [urgency, setUrgency] = useState<"low" | "medium" | "high">("medium");
+  const [ticketSuccessMsg, setTicketSuccessMsg] = useState<string | null>(null);
+  
+  // Telegram status states
+  const [isSendingTelegram, setIsSendingTelegram] = useState(false);
+  const [telegramStatus, setTelegramStatus] = useState<{ success: boolean; msg: string } | null>(null);
 
-  useEffect(() => {
-    fetchMaintenanceSchedule().then(data => {
-      setItems(data);
-      setIsLoading(false);
-    });
-  }, []);
+  const handleRegisterTicket = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const newId = `#SR-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newTicket: RegisteredIssue = {
+      id: newId,
+      date: new Date().toLocaleDateString() + " " + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      dtcCodes: [...telemetry.dtcs],
+      description: description.trim() || "Regular vehicle check and maintenance",
+      urgency,
+      status: "pending",
+      companyDetails: { ...serviceCompany }
+    };
+    
+    setRegisteredIssues(prev => [newTicket, ...prev]);
+    setDescription("");
+    setTicketSuccessMsg(`Ticket ${newId} registered successfully for ${serviceCompany.name}!`);
+
+    // TELEGRAM DISPATCH GATEWAY
+    if (telegramEnabled && telegramToken && telegramChatId) {
+      setIsSendingTelegram(true);
+      setTelegramStatus(null);
+      try {
+        const escapeHtml = (text: string) => {
+          return (text || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        };
+
+        const escapedId = escapeHtml(newId);
+        const escapedDate = escapeHtml(newTicket.date);
+        const escapedUrgency = escapeHtml(urgency.toUpperCase());
+        const escapedName = escapeHtml(serviceCompany.name);
+        const escapedPhone = escapeHtml(serviceCompany.phone || "Not configured");
+        const escapedEmail = escapeHtml(serviceCompany.email || "Not configured");
+        const escapedDescription = escapeHtml(newTicket.description);
+
+        const codesStr = newTicket.dtcCodes.length > 0 
+          ? newTicket.dtcCodes.map(c => `• <code>${escapeHtml(c)}</code>`).join("\n") 
+          : "• <i>No active trouble codes</i>";
+
+        const messageText = `<b>🚗 OBD-II GUARDIAN: VEHICLE TICKET FAULT REGISTERED</b>\n\n` +
+          `<b>🎫 Ticket ID:</b> <code>${escapedId}</code>\n` +
+          `<b>📅 Timestamp:</b> <code>${escapedDate}</code>\n` +
+          `<b>⚠️ Urgency Class:</b> <code>${escapedUrgency}</code>\n\n` +
+          `<b>🏢 Dispatch Target:</b> <b>${escapedName}</b>\n` +
+          `<b>📞 Support Hotkey:</b> <code>${escapedPhone}</code>\n` +
+          `<b>✉️ Support Email:</b> <code>${escapedEmail}</code>\n\n` +
+          `<b>📝 Symptom Report / Details:</b>\n<i>"${escapedDescription}"</i>\n\n` +
+          `<b>🚨 OBD-II Diagnostics (Attached ECU DTCs):</b>\n` +
+          codesStr + `\n\n` +
+          `<i>Sent automatically via integrated Telegram gateway.</i>`;
+
+        const res = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: telegramChatId,
+            text: messageText,
+            parse_mode: "HTML"
+          })
+        });
+
+        const resData = await res.json();
+        if (resData.ok) {
+          setTelegramStatus({ success: true, msg: "Dispatched to Telegram Bot successfully!" });
+        } else {
+          setTelegramStatus({ success: false, msg: `Telegram API: ${resData.description}` });
+        }
+      } catch (err: any) {
+        setTelegramStatus({ success: false, msg: `Network Fault: ${err.message}` });
+      } finally {
+        setIsSendingTelegram(false);
+      }
+    }
+
+    setTimeout(() => {
+      setTicketSuccessMsg(null);
+      setTelegramStatus(null);
+    }, 6000);
+  };
+
+  const handleCancelTicket = (id: string) => {
+    setRegisteredIssues(prev => prev.filter(t => t.id !== id));
+  };
+
+  const handleMarkResolved = (id: string) => {
+    setRegisteredIssues(prev => prev.map(t => t.id === id ? { ...t, status: "resolved" as const } : t));
+  };
 
   return (
-    <div className="h-full overflow-auto scroll-area p-6" style={{ background: "var(--bg-deep)" }}>
-      <div className="max-w-4xl mx-auto space-y-4">
-        <div className="hud-display text-2xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>
-          MAINTENANCE SCHEDULE
-        </div>
-        {health.predictions.length > 0 && (
-          <div className="panel p-4 panel-amber">
-            <div className="hud-label mb-2" style={{ color: "var(--amber)" }}>AI PREDICTIONS</div>
-            <div className="space-y-2">
-              {health.predictions.map((p, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <Zap size={12} style={{ color: "var(--amber)", marginTop: 2 }} />
-                  <span className="text-sm" style={{ color: "var(--text-secondary)" }}>{p}</span>
-                </div>
-              ))}
-            </div>
+    <div className="h-full overflow-y-auto scroll-area p-6" style={{ background: "var(--bg-deep)" }}>
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div>
+          <div className="hud-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>
+            VEHICLE SERVICE & DISPATCH PORTAL
           </div>
-        )}
-        <div className="space-y-2">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-10" style={{ color: "var(--cyan)" }}>
-              <Loader2 className="animate-spin" size={24} />
-              <span className="ml-3 text-sm" style={{ fontFamily: "Share Tech Mono" }}>FETCHING SCHEDULE FROM BACKEND...</span>
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10" style={{ color: "var(--text-muted)" }}>
-              <Database size={32} className="mb-2 opacity-50" />
-              <span className="text-sm" style={{ fontFamily: "Share Tech Mono" }}>NO MAINTENANCE SCHEDULE RETURNED FROM BACKEND API.</span>
-            </div>
-          ) : items.map((item) => (
-            <div key={item.type} className="panel p-4 flex items-center justify-between"
-              style={{ borderLeftColor: item.priority === "high" ? "var(--red)" : item.priority === "medium" ? "var(--amber)" : "var(--green)", borderLeftWidth: 2 }}>
-              <div className="flex items-center gap-3">
-                <Wrench size={16} style={{ color: item.priority === "high" ? "var(--red)" : item.priority === "medium" ? "var(--amber)" : "var(--green)" }} />
+          <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
+            REGISTER FAULTS, MONITOR SENSOR INCIDENTS AND TRANSMIT TICKETS TO ROADSIDE PARTNERS OVER SECURE CHANNELS
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* LEFT AREA: Issue Reporter & History Log (col 8) */}
+          <div className="lg:col-span-8 space-y-6">
+
+            {/* ─── REGISTER ISSUE / REPORT FAULT ─── */}
+            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+              <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={16} style={{ color: "var(--red)" }} />
+                  <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                    REGISTER A VEHICLE SERVICE FAULT TICKET
+                  </span>
+                </div>
+                {telegramEnabled && telegramToken && telegramChatId && (
+                  <span className="px-2 py-0.5 hud-label text-[8px] font-mono border border-green-500/30 text-green-400 bg-green-500/5 animate-pulse">
+                    ● TELEGRAM GATEWAY ACTIVE
+                  </span>
+                )}
+              </div>
+
+              {telemetry.dtcs.length > 0 ? (
+                <div className="p-3 border border-red-500/30 bg-red-500/5 flex items-start gap-3 animate-fade-in">
+                  <AlertTriangle size={16} style={{ color: "var(--red)" }} className="animate-pulse mt-0.5" />
+                  <div>
+                    <div className="text-xs font-bold text-red-400 font-mono">
+                      ACTIVE ECU DIAGNOSTIC FAULTS DETECTED: {telemetry.dtcs.join(", ")}
+                    </div>
+                    <div className="text-[11px] text-[var(--text-secondary)] mt-0.5 leading-relaxed">
+                      Car sensor relays registered active fault codes. Submitting this ticket will attach all active DTC configurations for accurate mechanic diagnostics.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 border border-green-500/20 bg-green-500/5 flex items-start gap-3">
+                  <CheckCircle size={16} style={{ color: "var(--green)" }} className="mt-0.5" />
+                  <div>
+                    <div className="text-xs font-bold text-green-400 font-mono">
+                      ALL ECU SENSORS HEALTHY
+                    </div>
+                    <div className="text-[11px] text-[var(--text-secondary)] mt-0.5 leading-relaxed">
+                      No active trouble codes are present. You can still register custom issues (e.g., oil level, fluid leaks, transmission sound, squeaking brakes) manually below.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={handleRegisterTicket} className="space-y-4">
                 <div>
-                  <div className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>{item.type}</div>
-                  <div className="hud-label text-[10px]">DUE IN {item.due}</div>
+                  <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                    ECU FAULT CODES TO ATTACH
+                  </label>
+                  <div className="p-2 border bg-black/30 font-mono text-xs flex flex-wrap gap-1.5" style={{ borderColor: "var(--border)" }}>
+                    {telemetry.dtcs.length === 0 ? (
+                      <span className="text-[11px] text-[var(--text-muted)] italic">No active trouble codes to attach</span>
+                    ) : (
+                      telemetry.dtcs.map(code => (
+                        <span key={code} className="px-1.5 py-0.5 bg-red-500/10 border border-red-500/30 text-red-400 text-[10px] font-bold">
+                          {code} ({code === "P0300" ? "Misfire" : code === "P0171" ? "Lean Fuel Blend" : code === "P0420" ? "Catalyst Inefficient" : "Fault Code"})
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                    DETAILED SYMPTOMS & ISSUE DESCRIPTION
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Describe symptoms or service required (e.g. Engine knocking at idle, fluid leakage on garage floor, brake squeal under light load)"
+                    required
+                    className="w-full bg-black/40 text-xs p-3 outline-none font-mono focus:border-red-500/30 resize-none"
+                    style={{
+                      border: "1px solid var(--border)",
+                      color: "var(--text-primary)",
+                    }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                      URGENCY LEVEL
+                    </label>
+                    <div className="flex border" style={{ borderColor: "var(--border)" }}>
+                      {(["low", "medium", "high"] as const).map((level) => (
+                        <button
+                          key={level}
+                          type="button"
+                          onClick={() => setUrgency(level)}
+                          className="flex-1 py-1.5 text-[9px] font-mono font-bold transition-all uppercase"
+                          style={{
+                            background: urgency === level ? (level === "high" ? "rgba(255,51,51,0.15)" : level === "medium" ? "rgba(255,184,0,0.15)" : "rgba(0,255,136,0.15)") : "transparent",
+                            color: urgency === level ? (level === "high" ? "var(--red)" : level === "medium" ? "var(--amber)" : "var(--green)") : "var(--text-muted)",
+                            borderRight: level !== "high" ? "1px solid var(--border)" : "none"
+                          }}
+                        >
+                          {level}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col justify-end">
+                    <button
+                      type="submit"
+                      disabled={isSendingTelegram}
+                      className="w-full py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-bold transition-all border flex items-center justify-center gap-2 uppercase disabled:opacity-50"
+                      style={{ borderColor: "rgba(255,51,51,0.4)" }}
+                    >
+                      {isSendingTelegram ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          DISPATCHING TICKET...
+                        </>
+                      ) : (
+                        <>
+                          <Wrench size={12} />
+                          TRANSMIT TICKET TO {serviceCompany.name.toUpperCase()}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {ticketSuccessMsg && (
+                  <div className="p-3.5 border border-green-500/30 bg-green-500/5 text-xs text-[var(--green)] font-mono space-y-1">
+                    <div className="font-bold">✓ {ticketSuccessMsg}</div>
+                    {telegramEnabled && telegramStatus && (
+                      <div className={`text-[11px] font-bold ${telegramStatus.success ? "text-green-400" : "text-amber-400 animate-pulse"}`}>
+                        {telegramStatus.success ? "✉ Telegram:" : "⚠️ Telegram:"} {telegramStatus.msg}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </form>
+            </div>
+
+            {/* ─── REGISTERED TICKETS LOG ─── */}
+            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+                <Clock size={16} style={{ color: "var(--purple)" }} />
+                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                  REGISTERED VEHICLE SERVICE RECORDS LOG ({registeredIssues.length})
+                </span>
+              </div>
+
+              {registeredIssues.length === 0 ? (
+                <div className="py-8 text-center text-xs font-mono text-[var(--text-muted)] border border-dashed" style={{ borderColor: "var(--border)" }}>
+                  NO CURRENT TICKETS ON FILE WITH YOUR SERVICE PROVIDER.<br />
+                  SUBMIT A TICKET ABOVE WHEN A PROBLEM ARISES.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {registeredIssues.map((ticket) => (
+                    <div key={ticket.id} className="p-4 border flex flex-col sm:flex-row justify-between gap-4 animate-fade-in" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.2)" }}>
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-bold text-white">{ticket.id}</span>
+                          <span className="text-[10px] text-[var(--text-muted)] font-mono">{ticket.date}</span>
+                          <span className="px-1.5 py-0.5 text-[8px] font-mono border"
+                            style={{
+                              borderColor: ticket.urgency === "high" ? "rgba(255,51,51,0.3)" : ticket.urgency === "medium" ? "rgba(255,184,0,0.3)" : "rgba(0,255,136,0.3)",
+                              color: ticket.urgency === "high" ? "var(--red)" : ticket.urgency === "medium" ? "var(--amber)" : "var(--green)"
+                            }}>
+                            {ticket.urgency.toUpperCase()} URGENCY
+                          </span>
+                          <span className="px-1.5 py-0.5 text-[8px] font-mono border"
+                            style={{
+                              borderColor: ticket.status === "resolved" ? "var(--green)" : "var(--amber)",
+                              color: ticket.status === "resolved" ? "var(--green)" : "var(--amber)",
+                              background: ticket.status === "resolved" ? "rgba(0,255,136,0.05)" : "rgba(255,184,0,0.05)"
+                            }}>
+                            {ticket.status === "resolved" ? "RESOLVED" : "PENDING GATEWAY DISPATCH"}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-[var(--text-secondary)] leading-relaxed font-mono">
+                          {ticket.description}
+                        </p>
+
+                        {ticket.dtcCodes.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            <span className="text-[9px] font-mono text-[var(--text-muted)] self-center mr-1">CODES:</span>
+                            {ticket.dtcCodes.map(code => (
+                              <span key={code} className="px-1 py-0.5 bg-red-500/5 border border-red-500/20 text-red-400 text-[8px] font-mono font-bold">
+                                {code}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="text-[10px] font-mono text-[var(--text-muted)] pt-1">
+                          DISPATCHED TO: <span className="text-white">{ticket.companyDetails?.name || "Service Company"}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex sm:flex-col justify-end gap-2 sm:w-32">
+                        {ticket.status !== "resolved" && (
+                          <button
+                            onClick={() => handleMarkResolved(ticket.id)}
+                            className="flex-1 sm:flex-none px-2 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-[10px] font-bold border transition-all uppercase"
+                            style={{ borderColor: "rgba(0,255,136,0.3)" }}
+                          >
+                            Mark Resolved
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleCancelTicket(ticket.id)}
+                          className="flex-1 sm:flex-none px-2 py-1 bg-black/40 hover:bg-red-500/10 hover:text-red-400 text-[10px] font-mono text-[var(--text-muted)] border border-white/10 hover:border-red-500/30 transition-all uppercase"
+                        >
+                          Delete Ticket
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* RIGHT AREA: Provider Card and Telegram Status Card (col 4) */}
+          <div className="lg:col-span-4 space-y-6">
+
+            {/* ─── CURRENT SERVICE PROVIDER CARD ─── */}
+            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+                <User size={16} style={{ color: "var(--cyan)" }} />
+                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                  CURRENT SERVICE PARTNER
+                </span>
+              </div>
+
+              <div className="space-y-3 font-mono">
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>COMPANY NAME</div>
+                  <div className="text-sm font-bold text-[var(--cyan)]">{serviceCompany.name}</div>
+                </div>
+
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>SUPPORT CONTACT PHONE</div>
+                  <div className="text-xs text-[var(--text-primary)]">{serviceCompany.phone || "Not set"}</div>
+                </div>
+
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>SUPPORT CONTACT EMAIL</div>
+                  <div className="text-xs text-[var(--text-primary)]">{serviceCompany.email || "Not set"}</div>
+                </div>
+
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>FACILITY / DISPATCH CENTER</div>
+                  <div className="text-xs text-[var(--text-primary)]">{serviceCompany.address || "Not set"}</div>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="px-2 py-0.5 hud-label text-[10px]"
-                  style={{
-                    border: `1px solid ${item.priority === "high" ? "rgba(255,51,51,0.4)" : item.priority === "medium" ? "rgba(255,184,0,0.4)" : "rgba(0,255,136,0.4)"}`,
-                    color: item.priority === "high" ? "var(--red)" : item.priority === "medium" ? "var(--amber)" : "var(--green)",
-                  }}>
-                  {item.status.toUpperCase()}
-                </span>
-                <button className="btn-hud btn-cyan px-3 py-1 text-[10px]">SCHEDULE</button>
+
+              <div className="pt-2 border-t" style={{ borderColor: "var(--border)" }}>
+                <p className="text-[10px] text-[var(--text-muted)] leading-relaxed italic mb-2">
+                  Need to change mechanic or roadside assistance partner? Update provider records in the settings dashboard.
+                </p>
+                <div className="hud-label text-[10px] text-[var(--cyan)] flex items-center gap-1 font-bold">
+                  <span>SETTINGS TAB &gt; SYSTEM CONFIGURATION</span>
+                </div>
               </div>
             </div>
-          ))}
+
+            {/* ─── TELEGRAM BOT GATEWAY STATUS CARD ─── */}
+            <div className="panel p-5 space-y-4 font-mono" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+                <Radio size={16} style={{ color: telegramEnabled ? "var(--green)" : "var(--text-muted)" }} className={telegramEnabled ? "animate-pulse" : ""} />
+                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                  TELEGRAM TELEMETRY GATEWAY
+                </span>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-[var(--text-muted)]">GATEWAY STATUS:</span>
+                  <span className={`font-bold px-1.5 py-0.5 border ${telegramEnabled ? "text-green-400 border-green-500/20 bg-green-500/5" : "text-[var(--text-muted)] border-white/10"}`}>
+                    {telegramEnabled ? "ACTIVE (LIVE)" : "MUTED / DISABLED"}
+                  </span>
+                </div>
+
+                {telegramEnabled ? (
+                  <>
+                    <div>
+                      <span className="text-[9px] text-[var(--text-muted)] block">TARGET CHAT ID</span>
+                      <span className="text-[11px] text-[var(--text-primary)] block break-all">{telegramChatId || "Empty"}</span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] text-[var(--text-muted)] block">BOT KEY PREFIX</span>
+                      <span className="text-[11px] text-[var(--text-primary)] block">
+                        {telegramToken ? `${telegramToken.slice(0, 8)}...` : "None"}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
+                    Telegram integration is currently disabled. Enable the bot gateway in settings to receive real-time fault tickets on your mobile device.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* ─── DIAGNOSTIC CHECKS GUIDANCE ─── */}
+            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+                <Shield size={16} style={{ color: "var(--amber)" }} />
+                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                  ECU TROUBLE CODES DECODER
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-2.5 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
+                  <div className="text-xs font-bold text-red-400 font-mono">P0300</div>
+                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">RANDOM/MULTIPLE ENGINE MISFIRE DETECTED</div>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
+                    Indicates spark plugs, ignition coils, or fuel injector delivery are failing under drive load. Urgent service required.
+                  </p>
+                </div>
+
+                <div className="p-2.5 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
+                  <div className="text-xs font-bold text-red-400 font-mono">P0171</div>
+                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">AIR-FUEL RATIO SYSTEM TOO LEAN (BANK 1)</div>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
+                    Indicates vacuum leaks or failing Mass Air Flow (MAF) sensors. Can degrade catalytic converters quickly.
+                  </p>
+                </div>
+
+                <div className="p-2.5 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
+                  <div className="text-xs font-bold text-red-400 font-mono">P0420</div>
+                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">CATALYST EFFICIENCY BELOW THRESHOLD</div>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
+                    Exhaust gas levels entering or leaving the catalyst are abnormal. Check O2 sensor voltage.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+          </div>
         </div>
       </div>
     </div>
@@ -903,6 +1382,14 @@ const SettingsTab: React.FC<{
   setTempUnit: (unit: "metric" | "imperial") => void;
   resetStates: () => void;
   injectDtc: (code: string) => void;
+  serviceCompany: ServiceCompanyDetails;
+  setServiceCompany: React.Dispatch<React.SetStateAction<ServiceCompanyDetails>>;
+  telegramToken: string;
+  setTelegramToken: (token: string) => void;
+  telegramChatId: string;
+  setTelegramChatId: (chatId: string) => void;
+  telegramEnabled: boolean;
+  setTelegramEnabled: (enabled: boolean) => void;
 }> = ({
   source,
   onToggleMock,
@@ -917,8 +1404,90 @@ const SettingsTab: React.FC<{
   setTempUnit,
   resetStates,
   injectDtc,
+  serviceCompany,
+  setServiceCompany,
+  telegramToken,
+  setTelegramToken,
+  telegramChatId,
+  setTelegramChatId,
+  telegramEnabled,
+  setTelegramEnabled,
 }) => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [companySuccessMsg, setCompanySuccessMsg] = useState<string | null>(null);
+  const [telegramSuccessMsg, setTelegramSuccessMsg] = useState<string | null>(null);
+  const [telegramErrorMsg, setTelegramErrorMsg] = useState<string | null>(null);
+  const [isTestingTelegram, setIsTestingTelegram] = useState(false);
+
+  const handleTestTelegram = async () => {
+    if (!telegramToken || !telegramChatId) {
+      setTelegramErrorMsg("Bot Token and Chat ID are required to test.");
+      setTimeout(() => setTelegramErrorMsg(null), 4000);
+      return;
+    }
+
+    setIsTestingTelegram(true);
+    setTelegramSuccessMsg(null);
+    setTelegramErrorMsg(null);
+
+    try {
+      const testMsg = `<b>🚗 OBD-II GUARDIAN: GATEWAY TEST SUCCESSFUL</b>\n\n` +
+        `This is a test notification confirming your Telegram Bot API connection to AutoVue is functional!\n\n` +
+        `• <b>Bot Token:</b> <code>Verified</code>\n` +
+        `• <b>Chat ID:</b> <code>${telegramChatId}</code>\n` +
+        `• <b>Timestamp:</b> <code>${new Date().toLocaleTimeString()}</code>`;
+
+      const res = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: telegramChatId,
+          text: testMsg,
+          parse_mode: "HTML"
+        })
+      });
+
+      const resData = await res.json();
+      if (resData.ok) {
+        setTelegramSuccessMsg("Test message dispatched successfully! Check your Telegram chat.");
+      } else {
+        setTelegramErrorMsg(`Telegram API: ${resData.description}`);
+      }
+    } catch (err: any) {
+      setTelegramErrorMsg(`Network Error: ${err.message}`);
+    } finally {
+      setIsTestingTelegram(false);
+      setTimeout(() => {
+        setTelegramSuccessMsg(null);
+        setTelegramErrorMsg(null);
+      }, 5000);
+    }
+  };
+
+  const [compName, setCompName] = useState(serviceCompany.name);
+  const [compEmail, setCompEmail] = useState(serviceCompany.email);
+  const [compPhone, setCompPhone] = useState(serviceCompany.phone);
+  const [compAddress, setCompAddress] = useState(serviceCompany.address);
+
+  // Sync with prop when tab mounts / resets
+  useEffect(() => {
+    setCompName(serviceCompany.name);
+    setCompEmail(serviceCompany.email);
+    setCompPhone(serviceCompany.phone);
+    setCompAddress(serviceCompany.address);
+  }, [serviceCompany]);
+
+  const handleSaveCompany = (e: React.FormEvent) => {
+    e.preventDefault();
+    setServiceCompany({
+      name: compName,
+      email: compEmail,
+      phone: compPhone,
+      address: compAddress
+    });
+    setCompanySuccessMsg("Service provider details updated successfully!");
+    setTimeout(() => setCompanySuccessMsg(null), 3000);
+  };
 
   const handleSave = () => {
     onSaveUrl();
@@ -1151,6 +1720,237 @@ const SettingsTab: React.FC<{
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* ─── CAR SERVICE COMPANY DETAILS ─── */}
+        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <Wrench size={16} style={{ color: "var(--cyan)" }} />
+            <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
+              CAR SERVICE COMPANY DETAILS
+            </span>
+          </div>
+
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+            Update your preferred automotive service center, mechanic shop, or roadside assistance company details. These contact details are used to file service tickets whenever issues or diagnostic trouble codes (DTCs) arise.
+          </p>
+
+          <form onSubmit={handleSaveCompany} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  COMPANY / SERVICE CENTER NAME
+                </label>
+                <input
+                  type="text"
+                  value={compName}
+                  onChange={(e) => setCompName(e.target.value)}
+                  placeholder="e.g., Apex Auto Services"
+                  required
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
+                  style={{
+                    border: "1px solid var(--border)",
+                    color: "var(--text-primary)",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  CONTACT PHONE NUMBER
+                </label>
+                <input
+                  type="text"
+                  value={compPhone}
+                  onChange={(e) => setCompPhone(e.target.value)}
+                  placeholder="e.g., +1 (555) 019-2834"
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
+                  style={{
+                    border: "1px solid var(--border)",
+                    color: "var(--text-primary)",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  SUPPORT EMAIL ADDRESS
+                </label>
+                <input
+                  type="email"
+                  value={compEmail}
+                  onChange={(e) => setCompEmail(e.target.value)}
+                  placeholder="e.g., service@apexauto.com"
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
+                  style={{
+                    border: "1px solid var(--border)",
+                    color: "var(--text-primary)",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  SERVICE CENTER ADDRESS
+                </label>
+                <input
+                  type="text"
+                  value={compAddress}
+                  onChange={(e) => setCompAddress(e.target.value)}
+                  placeholder="e.g., 404 Performance Blvd, Detroit, MI"
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
+                  style={{
+                    border: "1px solid var(--border)",
+                    color: "var(--text-primary)",
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              {companySuccessMsg ? (
+                <span className="text-xs text-[var(--green)] font-mono">
+                  ✓ {companySuccessMsg}
+                </span>
+              ) : (
+                <span />
+              )}
+              <button
+                type="submit"
+                className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs font-bold transition-all border flex items-center gap-2"
+                style={{ borderColor: "rgba(0,212,255,0.4)" }}
+              >
+                UPDATE PROVIDER DETAILS
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* ─── TELEGRAM FAULT DISPATCH GATEWAY ─── */}
+        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <div className="flex items-center gap-2">
+              <Radio size={16} style={{ color: "var(--green)" }} className={telegramEnabled ? "animate-pulse" : ""} />
+              <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
+                TELEGRAM FAULT DISPATCH GATEWAY
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTelegramEnabled(!telegramEnabled)}
+              className="px-3 py-1 text-[10px] font-bold border transition-all flex items-center gap-2"
+              style={{
+                borderColor: telegramEnabled ? "var(--green)" : "rgba(255,255,255,0.2)",
+                color: telegramEnabled ? "var(--green)" : "var(--text-muted)",
+                background: telegramEnabled ? "rgba(0,255,136,0.1)" : "transparent"
+              }}
+            >
+              <div className={`w-2 h-2 rounded-full ${telegramEnabled ? "bg-green-400 animate-pulse" : "bg-zinc-600"}`} />
+              <span>{telegramEnabled ? "ENABLED" : "DISABLED"}</span>
+            </button>
+          </div>
+
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+            By connecting a custom Telegram Bot, AutoVue will dispatch rich diagnostic fault reports and ticket alerts directly to your mobile devices/group channels upon client-side generation.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                TELEGRAM BOT API TOKEN
+              </label>
+              <input
+                type="password"
+                value={telegramToken}
+                onChange={(e) => setTelegramToken(e.target.value)}
+                placeholder="e.g., 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+                className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-green-500/50"
+                style={{
+                  border: "1px solid var(--border)",
+                  color: "var(--text-primary)",
+                }}
+              />
+              <span className="text-[9px] text-[var(--text-muted)] block mt-1">
+                Obtained from Telegram's official <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">@BotFather</a>.
+              </span>
+            </div>
+
+            <div>
+              <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                TELEGRAM TARGET CHAT ID
+              </label>
+              <input
+                type="text"
+                value={telegramChatId}
+                onChange={(e) => setTelegramChatId(e.target.value)}
+                placeholder="e.g., 987654321"
+                className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-green-500/50"
+                style={{
+                  border: "1px solid var(--border)",
+                  color: "var(--text-primary)",
+                }}
+              />
+              <span className="text-[9px] text-[var(--text-muted)] block mt-1">
+                Your personal ID or Group chat ID (can be fetched using <a href="https://t.me/userinfobot" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">@userinfobot</a>).
+              </span>
+            </div>
+          </div>
+
+          {/* Collapsible Quick-Start Guide */}
+          <details className="border p-3 border-white/10 bg-black/10 group">
+            <summary className="hud-label text-[10px] cursor-pointer text-cyan-400 hover:text-cyan-300 list-none flex items-center justify-between font-bold">
+              <span>📖 TELEGRAM BOT CONNECTION SETUP GUIDE (CLICK TO EXPAND)</span>
+              <span className="transition-transform group-open:rotate-180">▼</span>
+            </summary>
+            <div className="mt-3 text-xs text-[var(--text-secondary)] space-y-2 leading-relaxed">
+              <p>
+                Follow these simple steps to configure your own real-time dispatch gateway:
+              </p>
+              <ol className="list-decimal list-inside space-y-1 text-[11px] font-mono">
+                <li>Search for <strong className="text-white">@BotFather</strong> on Telegram and start a chat.</li>
+                <li>Send the command <code className="text-amber-400">/newbot</code> and follow instructions to name your bot.</li>
+                <li>Copy the generated <strong className="text-white">HTTP API Access Token</strong> and paste it above.</li>
+                <li>Search for <strong className="text-white">@userinfobot</strong> on Telegram and start it to instantly receive your unique <strong className="text-white">Chat ID</strong>. Paste it above.</li>
+                <li><strong>CRITICAL:</strong> Send a <strong>/start</strong> message to your newly created bot first, otherwise Telegram will block its messages!</li>
+                <li>Click <strong>TEST DISPATCH GATEWAY</strong> below to verify.</li>
+              </ol>
+            </div>
+          </details>
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+            <div>
+              {telegramSuccessMsg && (
+                <span className="text-xs text-[var(--green)] font-mono block">
+                  ✓ {telegramSuccessMsg}
+                </span>
+              )}
+              {telegramErrorMsg && (
+                <span className="text-xs text-red-400 font-mono block animate-pulse">
+                  ⚠️ {telegramErrorMsg}
+                </span>
+              )}
+            </div>
+            
+            <button
+              type="button"
+              onClick={handleTestTelegram}
+              disabled={isTestingTelegram}
+              className="px-4 py-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-xs font-bold transition-all border flex items-center justify-center gap-2 uppercase disabled:opacity-50"
+              style={{ borderColor: "rgba(0,255,136,0.4)" }}
+            >
+              {isTestingTelegram ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  TESTING DISPATCH...
+                </>
+              ) : (
+                <>
+                  <Radio size={12} />
+                  TEST DISPATCH GATEWAY
+                </>
+              )}
+            </button>
           </div>
         </div>
 

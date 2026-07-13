@@ -40,6 +40,23 @@ export interface UserProfile {
   createdAt: number;
 }
 
+export interface ServiceCompanyDetails {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+}
+
+export interface RegisteredIssue {
+  id: string;
+  date: string;
+  dtcCodes: string[];
+  description: string;
+  urgency: "low" | "medium" | "high";
+  status: "pending" | "scheduled" | "resolved";
+  companyDetails: ServiceCompanyDetails;
+}
+
 export interface MaintenanceLog {
   id: string;
   uid: string;
