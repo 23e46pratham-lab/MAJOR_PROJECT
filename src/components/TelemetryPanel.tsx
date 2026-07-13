@@ -8,6 +8,8 @@ import { calculateMileage } from "../logic/mileage";
 interface TelemetryPanelProps {
   telemetry: TelemetryData;
   history: TelemetryData[];
+  speedUnit?: "metric" | "imperial";
+  tempUnit?: "metric" | "imperial";
 }
 
 // ─── PARAM ROW ────────────────────────────────────────────────
@@ -53,9 +55,28 @@ const MiniCard: React.FC<{ icon: any; label: string; value: string; sub?: string
   );
 
 // ─── PANEL ────────────────────────────────────────────────────
-export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, history }) => {
-  const hist = (key: keyof TelemetryData) =>
-    history.map((h, i) => ({ t: i, v: Number(h[key]) || 0 }));
+export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, history, speedUnit = "metric", tempUnit = "metric" }) => {
+  const isImperialSpeed = speedUnit === "imperial";
+  const isImperialTemp = tempUnit === "imperial";
+
+  const displayVss = isImperialSpeed ? Math.round(telemetry.vss * 0.621371) : telemetry.vss;
+  const vssUnitStr = isImperialSpeed ? "mph" : "km/h";
+
+  const displayCoolant = isImperialTemp ? Math.round(telemetry.coolantTemp * 1.8 + 32) : telemetry.coolantTemp;
+  const displayIntake = isImperialTemp ? Math.round(telemetry.intakeAirTemp * 1.8 + 32) : telemetry.intakeAirTemp;
+  const tempUnitStr = isImperialTemp ? "°F" : "°C";
+
+  const hist = (key: keyof TelemetryData) => {
+    return history.map((h, i) => {
+      let val = Number(h[key]) || 0;
+      if (key === "vss" && isImperialSpeed) {
+        val = Math.round(val * 0.621371);
+      } else if ((key === "coolantTemp" || key === "intakeAirTemp") && isImperialTemp) {
+        val = Math.round(val * 1.8 + 32);
+      }
+      return { t: i, v: val };
+    });
+  };
 
   return (
     <div className="h-full grid grid-cols-12 gap-0 overflow-hidden" style={{ background: "var(--bg-deep)" }}>
@@ -70,11 +91,11 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
         </div>
         <div className="flex-1 overflow-y-auto scroll-area">
           <ParamRow label="ENGINE RPM" value={telemetry.rpm} unit="rpm" color="var(--cyan)" pct={(telemetry.rpm / 7000) * 100} alert={telemetry.rpm > 6000} />
-          <ParamRow label="VEHICLE SPEED" value={telemetry.vss} unit="km/h" color="var(--purple)" pct={(telemetry.vss / 240) * 100} />
+          <ParamRow label="VEHICLE SPEED" value={displayVss} unit={vssUnitStr} color="var(--purple)" pct={(telemetry.vss / 240) * 100} />
           <ParamRow label="ENGINE LOAD" value={telemetry.engineLoad} unit="%" color="var(--amber)" pct={telemetry.engineLoad} alert={telemetry.engineLoad > 90} />
           <ParamRow label="THROTTLE POS" value={telemetry.throttle} unit="%" color="var(--cyan)" pct={telemetry.throttle} />
-          <ParamRow label="COOLANT TEMP" value={telemetry.coolantTemp} unit="°C" color="var(--amber)" pct={(telemetry.coolantTemp / 130) * 100} alert={telemetry.coolantTemp > 105} />
-          <ParamRow label="INTAKE AIR" value={telemetry.intakeAirTemp} unit="°C" color="var(--cyan)" pct={(telemetry.intakeAirTemp / 60) * 100} />
+          <ParamRow label="COOLANT TEMP" value={displayCoolant} unit={tempUnitStr} color="var(--amber)" pct={(telemetry.coolantTemp / 130) * 100} alert={telemetry.coolantTemp > 105} />
+          <ParamRow label="INTAKE AIR" value={displayIntake} unit={tempUnitStr} color="var(--cyan)" pct={(telemetry.intakeAirTemp / 60) * 100} />
           <ParamRow label="MASS AIR FLOW" value={telemetry.maf} unit="g/s" color="var(--green)" pct={(telemetry.maf / 30) * 100} />
           <ParamRow label="EFFICIENCY" value={calculateMileage(telemetry)} unit="MPG" color="var(--green)" pct={(calculateMileage(telemetry) / 60) * 100} />
         </div>
@@ -90,10 +111,14 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
           <div className="panel p-3" style={{ borderColor: "var(--border)" }}>
             <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-secondary)" }}>RPM / SPEED CORRELATION</div>
             <MultiLineChart
-              data={history.map((h, i) => ({ t: i, rpm: h.rpm / 70, spd: h.vss }))}
+              data={history.map((h, i) => ({
+                t: i,
+                rpm: h.rpm / 70,
+                spd: isImperialSpeed ? Math.round(h.vss * 0.621371) : h.vss
+              }))}
               series={[
                 { key: "rpm", color: "var(--cyan)", label: "RPM÷70" },
-                { key: "spd", color: "var(--purple)", label: "KM/H" },
+                { key: "spd", color: "var(--purple)", label: isImperialSpeed ? "MPH" : "KM/H" },
               ]}
               height={90} maxPoints={60}
             />
@@ -101,9 +126,13 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
 
           {/* Temperature */}
           <div className="panel p-3" style={{ borderColor: "var(--border)" }}>
-            <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-secondary)" }}>THERMAL MONITORING</div>
+            <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-secondary)" }}>THERMAL MONITORING ({tempUnitStr})</div>
             <MultiLineChart
-              data={history.map((h, i) => ({ t: i, cool: h.coolantTemp, iat: h.intakeAirTemp }))}
+              data={history.map((h, i) => ({
+                t: i,
+                cool: isImperialTemp ? Math.round(h.coolantTemp * 1.8 + 32) : h.coolantTemp,
+                iat: isImperialTemp ? Math.round(h.intakeAirTemp * 1.8 + 32) : h.intakeAirTemp
+              }))}
               series={[
                 { key: "cool", color: "var(--amber)", label: "COOLANT" },
                 { key: "iat", color: "var(--cyan)", label: "IAT" },
@@ -138,7 +167,7 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
             color="var(--cyan)" chartData={hist("rpm")} />
           <MiniCard icon={Zap} label="THROTTLE" value={`${telemetry.throttle}%`} color="var(--cyan)"
             chartData={hist("throttle")} />
-          <MiniCard icon={Thermometer} label="COOLANT" value={`${telemetry.coolantTemp}°C`}
+          <MiniCard icon={Thermometer} label="COOLANT" value={isImperialTemp ? `${displayCoolant}°F` : `${displayCoolant}°C`}
             color={telemetry.coolantTemp > 100 ? "var(--red)" : "var(--amber)"} chartData={hist("coolantTemp")} />
           <MiniCard icon={Wind} label="MAF" value={`${telemetry.maf}g/s`} color="var(--green)"
             chartData={hist("maf")} />

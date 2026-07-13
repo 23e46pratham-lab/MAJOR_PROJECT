@@ -32,11 +32,11 @@ import { TelemetryPanel } from "./TelemetryPanel";
 import { HealthMonitor } from "./HealthMonitor";
 import { LiveChart } from "./LiveChart";
 
-type Tab = "overview" | "telemetry" | "diagnostics" | "maintenance" | "upload";
+type Tab = "overview" | "telemetry" | "diagnostics" | "maintenance" | "upload" | "settings";
 
 // ─── DATA SOURCE HOOK ──────────────────────────────────────────
 function useDataSource() {
-  const [source, setSource] = useState<"mock" | "obd" | "dataset">("mock");
+  const [source, setSource] = useState<"mock" | "obd" | "dataset">("obd");
   const [isConnected, setIsConnected] = useState(false);
 
   return { source, setSource, isConnected, setIsConnected };
@@ -63,6 +63,21 @@ export const Dashboard: React.FC = () => {
   const [hasAlerts, setHasAlerts] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  const [speedUnit, setSpeedUnit] = useState<"metric" | "imperial" >(() => {
+    return (localStorage.getItem("obd_speed_unit") as "metric" | "imperial") || "metric";
+  });
+  const [tempUnit, setTempUnit] = useState<"metric" | "imperial">(() => {
+    return (localStorage.getItem("obd_temp_unit") as "metric" | "imperial") || "metric";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("obd_speed_unit", speedUnit);
+  }, [speedUnit]);
+
+  useEffect(() => {
+    localStorage.setItem("obd_temp_unit", tempUnit);
+  }, [tempUnit]);
 
   const [savedUrl, setSavedUrl] = useState(getApiBaseUrl());
   const [tempUrl, setTempUrl] = useState(getApiBaseUrl());
@@ -413,6 +428,7 @@ export const Dashboard: React.FC = () => {
             { id: "telemetry", icon: Activity, label: "Telemetry" },
             { id: "diagnostics", icon: Shield, label: "Diagnostics" },
             { id: "maintenance", icon: Wrench, label: "Maintenance" },
+            { id: "settings", icon: Settings, label: "Settings" },
           ] as { id: Tab; icon: any; label: string }[]).map(({ id, icon: Icon, label }) => (
             <button
               key={id}
@@ -435,62 +451,6 @@ export const Dashboard: React.FC = () => {
             </button>
           ))}
         </nav>
-
-        {/* Debug / Data Source Toggle */}
-        <div className="px-3 py-3 border-t" style={{ borderColor: "var(--border)" }}>
-          <div className="p-3" style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}>
-            <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>DATA SOURCE</div>
-            <div className="flex items-center gap-2 mb-2">
-              <Database size={12} style={{ color: "var(--text-muted)" }} />
-              <span className="text-xs" style={{ color: "var(--text-secondary)", fontFamily: "Share Tech Mono" }}>
-                {source === "obd" ? "OBD-II LIVE" : source === "dataset" ? "DATASET" : "MOCK SIM"}
-              </span>
-            </div>
-            <button
-              onClick={handleToggleDataSource}
-              className="btn-hud w-full py-1.5 text-[10px] flex items-center justify-center gap-2"
-              style={{
-                borderColor: source === "obd" ? "rgba(255,184,0,0.4)" : "rgba(0,212,255,0.3)",
-                color: source === "obd" ? "var(--amber)" : "var(--cyan)",
-                background: source === "obd" ? "rgba(255,184,0,0.06)" : "rgba(0,212,255,0.06)",
-              }}
-            >
-              {source === "obd" ? <WifiOff size={11} /> : <Wifi size={11} />}
-              {source === "obd" ? "DISCONNECT" : "CONNECT OBD"}
-            </button>
-
-            {source === "obd" && (
-              <div className="mt-3 pt-3 border-t border-dashed" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
-                <label className="hud-label text-[9px] block mb-1" style={{ color: "var(--text-muted)" }}>TUNNEL/BACKEND URL</label>
-                <div className="flex gap-1">
-                  <input
-                    type="text"
-                    value={tempUrl}
-                    onChange={(e) => setTempUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full bg-black/40 text-[11px] px-2 py-1 outline-none font-mono focus:border-amber-500/50"
-                    style={{
-                      border: "1px solid var(--border)",
-                      color: "var(--text-primary)",
-                    }}
-                  />
-                  <button
-                    onClick={handleSaveUrl}
-                    className="px-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] font-bold transition-all border"
-                    style={{ borderColor: "rgba(255,184,0,0.4)" }}
-                  >
-                    SAVE
-                  </button>
-                </div>
-                {!isConnected && (
-                  <p className="text-[9px] mt-1.5 text-amber-500/90 font-mono leading-normal">
-                    ⚠️ Connection error. Make sure your local FastAPI backend & Pinggy tunnel are active, or update the URL above.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
 
         {/* Backend Status */}
         <div className="px-3 py-3 border-t" style={{ borderColor: "var(--border)" }}>
@@ -534,6 +494,7 @@ export const Dashboard: React.FC = () => {
                 {activeTab === "diagnostics" && "Diagnostics & Health"}
                 {activeTab === "maintenance" && "Maintenance Logs"}
                 {activeTab === "upload" && "Dataset Upload"}
+                {activeTab === "settings" && "System Settings"}
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <motion.div className="w-1.5 h-1.5 rounded-full" style={{ background: bColor }}
@@ -584,16 +545,38 @@ export const Dashboard: React.FC = () => {
               initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
               transition={{ duration: 0.2 }}>
               {activeTab === "overview" && (
-                <OverviewTab telemetry={telemetry} history={history} behavior={behavior} health={health} mileage={mileage} apiResponse={apiResponse} />
+                <OverviewTab telemetry={telemetry} history={history} behavior={behavior} health={health} mileage={mileage} apiResponse={apiResponse} speedUnit={speedUnit} tempUnit={tempUnit} />
               )}
               {activeTab === "telemetry" && (
-                <TelemetryPanel telemetry={telemetry} history={history} />
+                <TelemetryPanel telemetry={telemetry} history={history} speedUnit={speedUnit} tempUnit={tempUnit} />
               )}
               {activeTab === "diagnostics" && (
                 <HealthMonitor health={health} telemetry={telemetry} history={history} />
               )}
               {activeTab === "maintenance" && (
                 <MaintenanceTab health={health} />
+              )}
+              {activeTab === "settings" && (
+                <SettingsTab
+                  source={source}
+                  onToggleMock={handleToggleDataSource}
+                  tempUrl={tempUrl}
+                  onUrlChange={setTempUrl}
+                  onSaveUrl={handleSaveUrl}
+                  isConnected={isConnected}
+                  isBackendHealthy={isBackendHealthy}
+                  speedUnit={speedUnit}
+                  setSpeedUnit={setSpeedUnit}
+                  tempUnit={tempUnit}
+                  setTempUnit={setTempUnit}
+                  resetStates={resetStates}
+                  injectDtc={(code: string) => {
+                    setTelemetry(prev => ({
+                      ...prev,
+                      dtcs: prev.dtcs.includes(code) ? prev.dtcs : [...prev.dtcs, code]
+                    }));
+                  }}
+                />
               )}
             </motion.div>
           </AnimatePresence>
@@ -608,9 +591,18 @@ const OverviewTab: React.FC<{
   telemetry: TelemetryData; history: TelemetryData[];
   behavior: DriverBehavior; health: HealthStatus; mileage: number;
   apiResponse?: DriverPredictResponse | null;
-}> = ({ telemetry, history, behavior, health, mileage, apiResponse }) => {
+  speedUnit?: "metric" | "imperial";
+  tempUnit?: "metric" | "imperial";
+}> = ({ telemetry, history, behavior, health, mileage, apiResponse, speedUnit = "metric", tempUnit = "metric" }) => {
   const currentBehavior = apiResponse?.behaviour_class || behavior;
   const bColor = currentBehavior === "Economical" ? "var(--green)" : currentBehavior === "Moderate" ? "var(--amber)" : "var(--red)";
+
+  const isImperialSpeed = speedUnit === "imperial";
+  const isImperialTemp = tempUnit === "imperial";
+
+  const displayVss = isImperialSpeed ? Math.round(telemetry.vss * 0.621371) : telemetry.vss;
+  const displayCoolant = isImperialTemp ? Math.round(telemetry.coolantTemp * 1.8 + 32) : telemetry.coolantTemp;
+  const displayIntake = isImperialTemp ? Math.round(telemetry.intakeAirTemp * 1.8 + 32) : telemetry.intakeAirTemp;
 
   return (
     <div className="h-full grid grid-cols-12 grid-rows-6 gap-0 p-0" style={{ background: "var(--bg-deep)" }}>
@@ -631,8 +623,8 @@ const OverviewTab: React.FC<{
       <div className="col-span-3 row-span-3 border-r border-b panel flex flex-col items-center justify-center p-6"
         style={{ borderColor: "var(--border)" }}>
         <div className="hud-label mb-4" style={{ color: "var(--purple)" }}>VEHICLE SPEED</div>
-        <HUDGauge value={telemetry.vss} max={240} color="var(--purple)" unit="KM/H"
-          warning={130} critical={180} size={180} />
+        <HUDGauge value={displayVss} max={isImperialSpeed ? 150 : 240} color="var(--purple)" unit={isImperialSpeed ? "MPH" : "KM/H"}
+          warning={isImperialSpeed ? 80 : 130} critical={isImperialSpeed ? 110 : 180} size={180} />
         <div className="mt-4 grid grid-cols-2 gap-4 w-full">
           <MiniStat label="MAF" value={`${telemetry.maf}g/s`} color="var(--purple)" />
           <MiniStat label="GEAR" value="AUTO" color="var(--purple)" />
@@ -643,10 +635,10 @@ const OverviewTab: React.FC<{
       <div className="col-span-3 row-span-3 border-r border-b panel flex flex-col items-center justify-center p-6"
         style={{ borderColor: "var(--border)" }}>
         <div className="hud-label mb-4" style={{ color: "var(--amber)" }}>COOLANT TEMP</div>
-        <HUDGauge value={telemetry.coolantTemp} max={130} color="var(--amber)" unit="°C"
-          warning={100} critical={115} size={180} />
+        <HUDGauge value={displayCoolant} max={isImperialTemp ? 266 : 130} color="var(--amber)" unit={isImperialTemp ? "°F" : "°C"}
+          warning={isImperialTemp ? 212 : 100} critical={isImperialTemp ? 240 : 115} size={180} />
         <div className="mt-4 grid grid-cols-2 gap-4 w-full">
-          <MiniStat label="IAT" value={`${telemetry.intakeAirTemp}°C`} color="var(--amber)" />
+          <MiniStat label="IAT" value={isImperialTemp ? `${displayIntake}°F` : `${displayIntake}°C`} color="var(--amber)" />
         </div>
       </div>
 
@@ -895,3 +887,336 @@ export const MiniStat: React.FC<{ label: string; value: string | number; color: 
     <div className="text-sm font-bold" style={{ fontFamily: "Share Tech Mono", color }}>{value}</div>
   </div>
 );
+
+// ─── SYSTEM SETTINGS TAB ──────────────────────────────────────
+const SettingsTab: React.FC<{
+  source: "mock" | "obd" | "dataset";
+  onToggleMock: () => void;
+  tempUrl: string;
+  onUrlChange: (url: string) => void;
+  onSaveUrl: () => void;
+  isConnected: boolean;
+  isBackendHealthy: boolean | null;
+  speedUnit: "metric" | "imperial";
+  setSpeedUnit: (unit: "metric" | "imperial") => void;
+  tempUnit: "metric" | "imperial";
+  setTempUnit: (unit: "metric" | "imperial") => void;
+  resetStates: () => void;
+  injectDtc: (code: string) => void;
+}> = ({
+  source,
+  onToggleMock,
+  tempUrl,
+  onUrlChange,
+  onSaveUrl,
+  isConnected,
+  isBackendHealthy,
+  speedUnit,
+  setSpeedUnit,
+  tempUnit,
+  setTempUnit,
+  resetStates,
+  injectDtc,
+}) => {
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const handleSave = () => {
+    onSaveUrl();
+    setSuccessMsg("Backend URL saved successfully!");
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  return (
+    <div className="h-full overflow-y-auto scroll-area p-6" style={{ background: "var(--bg-deep)" }}>
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div>
+          <div className="hud-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>
+            SYSTEM CONFIGURATION
+          </div>
+          <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
+            MANAGE DATA SOURCES, DEVICE INTERFACES, DISPLAY UNITS AND CALIBRATION CONTROLS
+          </div>
+        </div>
+
+        {/* ─── DATA SOURCE SELECTION ─── */}
+        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <div className="flex items-center gap-2">
+              <Database size={16} style={{ color: "var(--cyan)" }} />
+              <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
+                TELEMETRY SOURCE MODES
+              </span>
+            </div>
+            <span className="px-2 py-0.5 hud-label text-[9px] font-mono border"
+              style={{
+                borderColor: source === "obd" ? "var(--green)" : "var(--cyan)",
+                color: source === "obd" ? "var(--green)" : "var(--cyan)",
+                background: source === "obd" ? "rgba(0,255,136,0.05)" : "rgba(0,212,255,0.05)"
+              }}>
+              {source === "obd" ? "LIVE OBD-II CH" : "LOCAL SIMULATOR"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Live OBD Mode Info */}
+            <div className="p-4 space-y-2 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.15)" }}>
+              <div className="hud-label text-xs font-bold" style={{ color: source === "obd" ? "var(--green)" : "var(--text-muted)" }}>
+                OBD-II LIVE OVER AIR (DEFAULT)
+              </div>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                Fetches real-time diagnostics parameters directly from physical vehicle gateways or remote emulator servers via REST and WebSockets.
+              </p>
+              <div className="pt-2 flex items-center gap-1.5 text-[10px] font-mono text-[var(--text-muted)]">
+                <span>CHANNEL STATUS:</span>
+                {isConnected ? (
+                  <span className="text-[var(--green)]">CONNECTED</span>
+                ) : (
+                  <span className="text-[var(--amber)]">STANDBY / CONNECTING</span>
+                )}
+              </div>
+            </div>
+
+            {/* Mock Sim Mode Control */}
+            <div className="p-4 space-y-3 border flex flex-col justify-between"
+              style={{
+                borderColor: source === "mock" ? "var(--cyan)" : "var(--border)",
+                background: source === "mock" ? "rgba(0,212,255,0.04)" : "rgba(0,0,0,0.15)"
+              }}>
+              <div>
+                <div className="hud-label text-xs font-bold" style={{ color: source === "mock" ? "var(--cyan)" : "var(--text-secondary)" }}>
+                  MOCK SIMULATOR SWITCH
+                </div>
+                <p className="text-xs text-[var(--text-secondary)] leading-relaxed mt-1">
+                  Enables a comprehensive local synthetic drivecycle loop simulating RPM, Speed, Loads, and Temperatures for presentation.
+                </p>
+              </div>
+
+              {/* Slider Toggle Button */}
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-[10px] font-mono text-[var(--text-muted)]">TOGGLE STATE:</span>
+                <button
+                  onClick={onToggleMock}
+                  className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold transition-all border relative"
+                  style={{
+                    borderColor: source === "mock" ? "var(--cyan)" : "rgba(255,255,255,0.2)",
+                    color: source === "mock" ? "var(--cyan)" : "var(--text-muted)",
+                    background: source === "mock" ? "rgba(0,212,255,0.12)" : "transparent"
+                  }}
+                >
+                  <motion.div
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ background: source === "mock" ? "var(--cyan)" : "var(--text-muted)" }}
+                    animate={source === "mock" ? { opacity: [1, 0.4, 1] } : {}}
+                    transition={{ duration: 1, repeat: Infinity }}
+                  />
+                  <span>{source === "mock" ? "ACTIVE" : "DISABLED"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ─── ENDPOINT & TUNNEL CONNECTION ─── */}
+        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <Server size={16} style={{ color: "var(--amber)" }} />
+            <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
+              OBD-II TUNNEL ENDPOINT
+            </span>
+          </div>
+
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+            Specify the REST and WebSocket gateway API endpoint of your local diagnostic logger (e.g. FastAPI/Pinggy proxy address).
+          </p>
+
+          <div className="space-y-3">
+            <div>
+              <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
+                GATEWAY BASE URL
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={tempUrl}
+                  onChange={(e) => onUrlChange(e.target.value)}
+                  placeholder="e.g., http://localhost:8000"
+                  className="flex-1 bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-amber-500/50"
+                  style={{
+                    border: "1px solid var(--border)",
+                    color: "var(--text-primary)",
+                  }}
+                />
+                <button
+                  onClick={handleSave}
+                  className="px-4 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-bold transition-all border flex items-center gap-2"
+                  style={{ borderColor: "rgba(255,184,0,0.5)" }}
+                >
+                  SAVE ENDPOINT
+                </button>
+              </div>
+            </div>
+
+            {successMsg && (
+              <div className="text-xs text-[var(--green)] font-mono">
+                ✓ {successMsg}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+              {/* Endpoint Health status card */}
+              <div className="p-3 border flex items-center justify-between" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
+                <span className="text-[10px] text-[var(--text-muted)] font-mono">BACKEND INSTANCE:</span>
+                <span className="text-xs font-bold font-mono" style={{ color: isBackendHealthy ? "var(--green)" : "var(--red)" }}>
+                  {isBackendHealthy === null ? "CHECKING..." : isBackendHealthy ? "ONLINE (CONNECTED)" : "OFFLINE (COULD NOT REACH)"}
+                </span>
+              </div>
+
+              {/* Endpoint Socket status card */}
+              <div className="p-3 border flex items-center justify-between" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
+                <span className="text-[10px] text-[var(--text-muted)] font-mono">LIVE WS CHANNEL:</span>
+                <span className="text-xs font-bold font-mono" style={{ color: isConnected ? "var(--green)" : "var(--amber)" }}>
+                  {isConnected ? "ACTIVE" : "STANDBY"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ─── DISPLAY PREFERENCES ─── */}
+        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <Eye size={16} style={{ color: "var(--purple)" }} />
+            <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
+              DISPLAY PREFERENCES
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Speed units */}
+            <div className="space-y-2">
+              <span className="hud-label text-[10px] block" style={{ color: "var(--text-muted)" }}>
+                VELOCITY UNIT SYSTEM
+              </span>
+              <div className="flex border" style={{ borderColor: "var(--border)" }}>
+                <button
+                  onClick={() => setSpeedUnit("metric")}
+                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
+                  style={{
+                    background: speedUnit === "metric" ? "rgba(168,85,247,0.15)" : "transparent",
+                    color: speedUnit === "metric" ? "var(--purple)" : "var(--text-muted)",
+                    borderRight: "1px solid var(--border)"
+                  }}
+                >
+                  METRIC (KM/H)
+                </button>
+                <button
+                  onClick={() => setSpeedUnit("imperial")}
+                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
+                  style={{
+                    background: speedUnit === "imperial" ? "rgba(168,85,247,0.15)" : "transparent",
+                    color: speedUnit === "imperial" ? "var(--purple)" : "var(--text-muted)"
+                  }}
+                >
+                  IMPERIAL (MPH)
+                </button>
+              </div>
+            </div>
+
+            {/* Thermal units */}
+            <div className="space-y-2">
+              <span className="hud-label text-[10px] block" style={{ color: "var(--text-muted)" }}>
+                TEMPERATURE SCALING
+              </span>
+              <div className="flex border" style={{ borderColor: "var(--border)" }}>
+                <button
+                  onClick={() => setTempUnit("metric")}
+                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
+                  style={{
+                    background: tempUnit === "metric" ? "rgba(255,184,0,0.15)" : "transparent",
+                    color: tempUnit === "metric" ? "var(--amber)" : "var(--text-muted)",
+                    borderRight: "1px solid var(--border)"
+                  }}
+                >
+                  CELSIUS (°C)
+                </button>
+                <button
+                  onClick={() => setTempUnit("imperial")}
+                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
+                  style={{
+                    background: tempUnit === "imperial" ? "rgba(255,184,0,0.15)" : "transparent",
+                    color: tempUnit === "imperial" ? "var(--amber)" : "var(--text-muted)"
+                  }}
+                >
+                  FAHRENHEIT (°F)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ─── TESTING AND DIAGNOSTICS CONTROL ─── */}
+        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <Shield size={16} style={{ color: "var(--red)" }} />
+            <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
+              OBD-II INJECTOR / FAULT CODE SIMULATOR
+            </span>
+          </div>
+
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+            Verify DTC notification handlers and health metrics scoring maps inside your diagnostics module by injecting diagnostic trouble codes.
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <button
+              onClick={() => injectDtc("P0300")}
+              className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold transition-all"
+            >
+              INJECT P0300 (MISFIRE)
+            </button>
+            <button
+              onClick={() => injectDtc("P0171")}
+              className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold transition-all"
+            >
+              INJECT P0171 (SYSTEM TOO LEAN)
+            </button>
+            <button
+              onClick={() => injectDtc("P0420")}
+              className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold transition-all"
+            >
+              INJECT P0420 (CATALYST LOW)
+            </button>
+          </div>
+        </div>
+
+        {/* ─── MAINTENANCE & APP CACHE ─── */}
+        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <Wrench size={16} style={{ color: "var(--text-muted)" }} />
+            <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
+              DASHBOARD CALIBRATION & RESET
+            </span>
+          </div>
+
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="text-xs font-bold text-[var(--text-primary)]">
+                RESET SYSTEM TRIP CACHES
+              </div>
+              <p className="text-xs text-[var(--text-secondary)] mt-1">
+                Clears the active drive session timers, odometer distance logs, sensor graphs buffer history, and restores diagnostic scoring metrics back to standard defaults.
+              </p>
+            </div>
+
+            <button
+              onClick={resetStates}
+              className="px-4 py-2 hover:bg-white/10 text-white text-[10px] font-bold transition-all border border-white/20 uppercase"
+            >
+              RESET ALL TRIP DATA
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
