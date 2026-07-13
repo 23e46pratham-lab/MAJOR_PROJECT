@@ -1,5 +1,5 @@
 {
-  "name": "Remix: Smart ECU Monitoring \u0026 Predictive Maintenance",
+  "name": "AutoVue",
   "description": "A real-time vehicle telemetry dashboard with driver behavior analysis, mileage tracking, and ML-based health monitoring.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

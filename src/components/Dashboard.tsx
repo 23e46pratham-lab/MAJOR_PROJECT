@@ -455,8 +455,8 @@ export const Dashboard: React.FC = () => {
               <Cpu size={16} style={{ color: "var(--cyan)" }} />
             </div>
             <div>
-              <div className="hud-display text-base font-bold" style={{ color: "var(--cyan)", letterSpacing: "0.05em" }}>ECU<span style={{ color: "var(--text-primary)" }}> G</span></div>
-              <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>GUARDIAN v2.4</div>
+              <div className="hud-display text-base font-bold" style={{ color: "var(--cyan)", letterSpacing: "0.05em" }}>AUTO<span style={{ color: "var(--text-primary)" }}>VUE</span></div>
+              <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>OBD-II TELEMETRY</div>
             </div>
           </div>
         </div>
