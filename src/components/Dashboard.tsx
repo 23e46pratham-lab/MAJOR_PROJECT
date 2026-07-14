@@ -763,19 +763,19 @@ const OverviewTab: React.FC<{
             <div className="hud-display text-5xl font-black" style={{ color: "var(--green)" }}>
               {mileage > 0 ? mileage.toFixed(1) : "--"}
             </div>
-            <div className="hud-label">MPG INSTANT</div>
+            <div className="hud-label">KM/L INSTANT</div>
           </div>
           <div className="flex-1 pb-1">
             <div className="hud-label text-[9px] mb-1">L/100KM EQUIV</div>
             <div className="text-lg font-bold" style={{ fontFamily: "Share Tech Mono", color: "var(--text-secondary)" }}>
-              {mileage > 0 ? (235.215 / mileage).toFixed(1) : "--"}
+              {mileage > 0 ? (100 / mileage).toFixed(1) : "--"}
             </div>
           </div>
         </div>
         {/* Mileage sparkline */}
         <div className="flex-1 min-h-0">
           <LiveChart data={history.map((h, i) => ({ t: i, v: calculateMileage(h) }))}
-            color="var(--green)" label="MPG" maxPoints={60} height={80} />
+            color="var(--green)" label="km/L" maxPoints={60} height={80} />
         </div>
       </div>
 
