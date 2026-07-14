@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Activity, Gauge, AlertTriangle, User, Server,
@@ -78,6 +78,45 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     localStorage.setItem("obd_temp_unit", tempUnit);
   }, [tempUnit]);
+
+  const [activeDtcs, setActiveDtcs] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("obd_active_dtcs");
+      if (stored) return JSON.parse(stored);
+    } catch (e) {}
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem("obd_active_dtcs", JSON.stringify(activeDtcs));
+  }, [activeDtcs]);
+
+  const toggleDtc = useCallback((code: string) => {
+    setActiveDtcs(prev => 
+      prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]
+    );
+  }, []);
+
+  const displayedTelemetry = useMemo(() => {
+    const controlledCodes = ["P0300", "P0171", "P0420"];
+    const baseDtcs = (telemetry && telemetry.dtcs) ? telemetry.dtcs.filter(code => !controlledCodes.includes(code)) : [];
+    const mergedDtcs = Array.from(new Set([...baseDtcs, ...activeDtcs]));
+    return {
+      ...telemetry,
+      dtcs: mergedDtcs
+    };
+  }, [telemetry, activeDtcs]);
+
+  const displayedHistory = useMemo(() => {
+    const controlledCodes = ["P0300", "P0171", "P0420"];
+    return history.map(h => {
+      const baseDtcs = h.dtcs ? h.dtcs.filter(code => !controlledCodes.includes(code)) : [];
+      return {
+        ...h,
+        dtcs: Array.from(new Set([...baseDtcs, ...activeDtcs]))
+      };
+    });
+  }, [history, activeDtcs]);
 
   const [serviceCompany, setServiceCompany] = useState<ServiceCompanyDetails>(() => {
     try {
@@ -416,19 +455,19 @@ export const Dashboard: React.FC = () => {
 
   // Logic updates
   useEffect(() => {
-    const newBehavior = classifyDriverBehavior(telemetry);
-    const newMileage = calculateMileage(telemetry);
+    const newBehavior = classifyDriverBehavior(displayedTelemetry);
+    const newMileage = calculateMileage(displayedTelemetry);
 
     setBehavior(newBehavior);
     setMileage(newMileage);
 
-    const newHealth = analyzeVehicleHealth(telemetry, history);
+    const newHealth = analyzeVehicleHealth(displayedTelemetry, displayedHistory);
     setHealth(newHealth);
     
     const alerts = newHealth.faults.length + (newHealth.status === "Critical" ? 1 : 0);
     setAlertCount(alerts);
     setHasAlerts(alerts > 0);
-  }, [telemetry, source]);
+  }, [displayedTelemetry, displayedHistory, source]);
 
   const formatTime = (s: number) => {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -596,18 +635,18 @@ export const Dashboard: React.FC = () => {
               initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
               transition={{ duration: 0.2 }}>
               {activeTab === "overview" && (
-                <OverviewTab telemetry={telemetry} history={history} behavior={behavior} health={health} mileage={mileage} apiResponse={apiResponse} speedUnit={speedUnit} tempUnit={tempUnit} />
+                <OverviewTab telemetry={displayedTelemetry} history={displayedHistory} behavior={behavior} health={health} mileage={mileage} apiResponse={apiResponse} speedUnit={speedUnit} tempUnit={tempUnit} />
               )}
               {activeTab === "telemetry" && (
-                <TelemetryPanel telemetry={telemetry} history={history} speedUnit={speedUnit} tempUnit={tempUnit} />
+                <TelemetryPanel telemetry={displayedTelemetry} history={displayedHistory} speedUnit={speedUnit} tempUnit={tempUnit} />
               )}
               {activeTab === "diagnostics" && (
-                <HealthMonitor health={health} telemetry={telemetry} history={history} />
+                <HealthMonitor health={health} telemetry={displayedTelemetry} history={displayedHistory} />
               )}
               {activeTab === "maintenance" && (
                 <MaintenanceTab
                   health={health}
-                  telemetry={telemetry}
+                  telemetry={displayedTelemetry}
                   serviceCompany={serviceCompany}
                   registeredIssues={registeredIssues}
                   setRegisteredIssues={setRegisteredIssues}
@@ -630,12 +669,8 @@ export const Dashboard: React.FC = () => {
                   tempUnit={tempUnit}
                   setTempUnit={setTempUnit}
                   resetStates={resetStates}
-                  injectDtc={(code: string) => {
-                    setTelemetry(prev => ({
-                      ...prev,
-                      dtcs: prev.dtcs.includes(code) ? prev.dtcs : [...prev.dtcs, code]
-                    }));
-                  }}
+                  activeDtcs={activeDtcs}
+                  toggleDtc={toggleDtc}
                   serviceCompany={serviceCompany}
                   setServiceCompany={setServiceCompany}
                   telegramToken={telegramToken}
@@ -1381,7 +1416,8 @@ const SettingsTab: React.FC<{
   tempUnit: "metric" | "imperial";
   setTempUnit: (unit: "metric" | "imperial") => void;
   resetStates: () => void;
-  injectDtc: (code: string) => void;
+  activeDtcs: string[];
+  toggleDtc: (code: string) => void;
   serviceCompany: ServiceCompanyDetails;
   setServiceCompany: React.Dispatch<React.SetStateAction<ServiceCompanyDetails>>;
   telegramToken: string;
@@ -1403,7 +1439,8 @@ const SettingsTab: React.FC<{
   tempUnit,
   setTempUnit,
   resetStates,
-  injectDtc,
+  activeDtcs,
+  toggleDtc,
   serviceCompany,
   setServiceCompany,
   telegramToken,
@@ -1967,25 +2004,41 @@ const SettingsTab: React.FC<{
             Verify DTC notification handlers and health metrics scoring maps inside your diagnostics module by injecting diagnostic trouble codes.
           </p>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <button
-              onClick={() => injectDtc("P0300")}
-              className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold transition-all"
-            >
-              INJECT P0300 (MISFIRE)
-            </button>
-            <button
-              onClick={() => injectDtc("P0171")}
-              className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold transition-all"
-            >
-              INJECT P0171 (SYSTEM TOO LEAN)
-            </button>
-            <button
-              onClick={() => injectDtc("P0420")}
-              className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold transition-all"
-            >
-              INJECT P0420 (CATALYST LOW)
-            </button>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {[
+              { code: "P0300", name: "MISFIRE (P0300)", desc: "Random/Multiple Cylinder Misfire Detected" },
+              { code: "P0171", name: "SYSTEM TOO LEAN (P0171)", desc: "Fuel mixture too lean under load" },
+              { code: "P0420", name: "CATALYST LOW (P0420)", desc: "Catalytic Converter Efficiency Below Threshold" }
+            ].map(({ code, name, desc }) => {
+              const isActive = activeDtcs.includes(code);
+              return (
+                <button
+                  key={code}
+                  onClick={() => toggleDtc(code)}
+                  className={`px-3 py-2.5 border text-left flex flex-col justify-between transition-all relative overflow-hidden group ${
+                    isActive 
+                      ? "bg-red-500/15 border-red-500 text-red-400 shadow-[0_0_12px_rgba(239,68,68,0.15)]" 
+                      : "bg-zinc-900/50 hover:bg-zinc-900/80 border-zinc-800 hover:border-zinc-700 text-zinc-400"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className={`text-[10px] font-mono font-bold tracking-wider uppercase ${isActive ? "text-red-400" : "text-zinc-400"}`}>
+                      {name}
+                    </span>
+                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-none uppercase ${
+                      isActive 
+                        ? "bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse" 
+                        : "bg-zinc-800 text-zinc-500 border border-zinc-700/50"
+                    }`}>
+                      {isActive ? "ACTIVE" : "INACTIVE"}
+                    </span>
+                  </div>
+                  <span className="text-[9px] text-zinc-500 font-sans leading-tight mt-1 group-hover:text-zinc-400 transition-colors">
+                    {desc}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

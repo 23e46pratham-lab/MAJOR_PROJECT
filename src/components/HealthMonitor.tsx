@@ -167,7 +167,7 @@ export const HealthMonitor: React.FC<HealthMonitorProps> = ({ health, telemetry,
             <div className="hud-label text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>HEALTH SCORE TREND</div>
             <LiveChart
               data={history.map((h, i) => {
-                const score = Math.max(0, 95 - (h.coolantTemp > 105 ? 20 : 0) - (h.dtcs.length * 10));
+                const score = Math.max(0, 95 - (h.coolantTemp > 105 ? 20 : 0) - (h.dtcs.length * 15) - (h.rpm > 6000 && h.engineLoad > 90 ? 10 : 0));
                 return { t: i, v: score };
               })}
               color={statusColor} label="Health" height={60} maxPoints={80}
