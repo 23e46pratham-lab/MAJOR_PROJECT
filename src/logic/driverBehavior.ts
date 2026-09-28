@@ -22,17 +22,17 @@ export function classifyDriverBehavior(data: TelemetryData): DriverBehavior {
     effectiveThrottle = Math.max(0, ((throttle - observedMinThrottle) / (100 - observedMinThrottle)) * 100);
   }
 
-  // Guard: If vehicle is practically stationary, do not classify as Harsh unless engine is aggressively revved
+  // Guard: If vehicle is practically stationary, do not classify as Aggressive unless engine is aggressively revved
   if (vss < 5) {
     if (rpm > 4500) {
-      return "Harsh";
+      return "Aggressive";
     }
     return "Moderate";
   }
 
-  // Harsh: High effective throttle, or extremely high engine RPM
+  // Aggressive: High effective throttle, or extremely high engine RPM
   if (effectiveThrottle > 45 || rpm > 4500) {
-    return "Harsh";
+    return "Aggressive";
   }
 
   // Economical: Low effective throttle, moderate RPM, and cruising speed

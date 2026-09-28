@@ -64,7 +64,10 @@ export function analyzeVehicleHealth(data: TelemetryData, history: TelemetryData
   return {
     score: Math.max(0, score),
     status,
-    predictions,
+    anomalyScore: status === "Critical" ? 1.25 : status === "Warning" ? 0.35 : 0.000012,
+    isAnomaly: status === "Critical",
+    featureErrors: {},
+    triggeredFeatures: [],
     faults,
   };
 }

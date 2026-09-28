@@ -65,6 +65,11 @@ async function startServer() {
     proxyMiddleware(req, res, next);
   });
 
+  app.use("/health", (req, res, next) => {
+    req.url = req.originalUrl;
+    proxyMiddleware(req, res, next);
+  });
+
   // Setup Vite dev server or static serving
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

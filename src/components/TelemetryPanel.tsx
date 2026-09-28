@@ -97,7 +97,11 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ telemetry, histo
           <ParamRow label="COOLANT TEMP" value={displayCoolant} unit={tempUnitStr} color="var(--amber)" pct={(telemetry.coolantTemp / 130) * 100} alert={telemetry.coolantTemp > 105} />
           <ParamRow label="INTAKE AIR" value={displayIntake} unit={tempUnitStr} color="var(--cyan)" pct={(telemetry.intakeAirTemp / 60) * 100} />
           <ParamRow label="MASS AIR FLOW" value={telemetry.maf} unit="g/s" color="var(--green)" pct={(telemetry.maf / 30) * 100} />
-          <ParamRow label="EFFICIENCY" value={calculateMileage(telemetry)} unit="km/L" color="var(--green)" pct={(calculateMileage(telemetry) / 25) * 100} />
+          <ParamRow label="MANIFOLD PRESS" value={telemetry.mapKpa ?? 101} unit="kPa" color="var(--purple)" pct={((telemetry.mapKpa ?? 101) / 250) * 100} />
+          <ParamRow label="EFFICIENCY" value={telemetry.ml?.fuel?.mileage_kmpl ?? calculateMileage(telemetry)} unit="km/L" color="var(--green)" pct={(((telemetry.ml?.fuel?.mileage_kmpl ?? calculateMileage(telemetry))) / 25) * 100} />
+          {telemetry.ml?.fuel?.fcr_gs !== undefined && (
+            <ParamRow label="FUEL RATE (FCR)" value={telemetry.ml.fuel.fcr_gs.toFixed(2)} unit="g/s" color="var(--green)" pct={(telemetry.ml.fuel.fcr_gs / 5) * 100} />
+          )}
         </div>
       </div>
 

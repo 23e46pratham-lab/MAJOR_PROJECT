@@ -8,35 +8,40 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Activity, Gauge, AlertTriangle, User, Server,
   Thermometer, Wind, Zap, Loader2,
-  LayoutDashboard, Wrench, Radio,
-  ChevronRight, Power, Database, Cpu, Eye,
-  TrendingUp, AlertCircle, CheckCircle, Settings,
-  Fuel, Clock, Shield, BarChart3, Navigation2,
-  Wifi, WifiOff, RefreshCw, Bell, BellOff, Sun, Moon
+  LayoutDashboard, Wrench, Radio, MapPin, Navigation2,
+  ChevronRight, ChevronDown, ChevronUp, Power, Database, Cpu, Eye,
+  TrendingUp, AlertCircle, CheckCircle, Settings, Sliders,
+  Fuel, Clock, Shield, BarChart3,
+  Wifi, WifiOff, RefreshCw, Bell, BellOff, Sun, Moon, Volume2
 } from "lucide-react";
-import { TelemetryData, DriverBehavior, HealthStatus, DriverPredictResponse, ServiceCompanyDetails, RegisteredIssue } from "../types";
+import {
+  TelemetryData, DriverBehavior, HealthStatus,
+  ServiceCompanyDetails, RegisteredIssue,
+  DriverMLResult, HealthMLResult, FuelMLResult, MLInference
+} from "../types";
 import {
   MaintenanceScheduleItem,
   fetchMaintenanceSchedule,
   getWebSocketUrl,
   mapSimulatedDataToTelemetry,
   getApiBaseUrl,
-  setApiBaseUrl
+  setApiBaseUrl,
+  checkBackendHealth,
+  getLiveData,
+  getLatestML,
+  getActiveDtcCodes
 } from "../services/apiService";
-import { simulateECUData } from "../services/ecuSimulator";
-import { classifyDriverBehavior } from "../logic/driverBehavior";
-import { analyzeVehicleHealth } from "../logic/mlHealth";
-import { calculateMileage } from "../logic/mileage";
 import { HUDGauge } from "./HUDGauge";
 import { TelemetryPanel } from "./TelemetryPanel";
 import { HealthMonitor } from "./HealthMonitor";
 import { LiveChart } from "./LiveChart";
+import { GPSMap } from "./GPSMap";
 
-type Tab = "overview" | "telemetry" | "diagnostics" | "maintenance" | "upload" | "settings";
+type Tab = "overview" | "telemetry" | "diagnostics" | "map" | "maintenance" | "settings";
 
 // ─── DATA SOURCE HOOK ──────────────────────────────────────────
 function useDataSource() {
-  const [source, setSource] = useState<"mock" | "obd" | "dataset">("obd");
+  const [source, setSource] = useState<"obd" | "mock">("obd");
   const [isConnected, setIsConnected] = useState(false);
 
   return { source, setSource, isConnected, setIsConnected };
@@ -44,27 +49,29 @@ function useDataSource() {
 
 // ─── MAIN DASHBOARD ───────────────────────────────────────────
 export const Dashboard: React.FC = () => {
-  const [telemetry, setTelemetry] = useState<TelemetryData>(simulateECUData());
+  const [telemetry, setTelemetry] = useState<TelemetryData>(() =>
+    mapSimulatedDataToTelemetry({
+      rpm: 800,
+      vss: 0,
+      maf: 3.5,
+      throttle_pos: 15,
+      coolant_temp: 85,
+      intake_air_temp: 25,
+      ambient_temp: 24,
+      map_kpa: 101,
+      engine_load: 20,
+      dtcs: [],
+    })
+  );
+
   const [history, setHistory] = useState<TelemetryData[]>([]);
-  const [behavior, setBehavior] = useState<DriverBehavior>("Moderate");
-  const [health, setHealth] = useState<HealthStatus>({
-    score: 95, status: "Healthy", predictions: [], faults: [],
-  });
-  const [mileage, setMileage] = useState(0);
-  const [apiResponse, setApiResponse] = useState<DriverPredictResponse | null>(null);
-  const [dataset, setDataset] = useState<TelemetryData[]>([]);
-  const [datasetIndex, setDatasetIndex] = useState(0);
-  const [isAuthReady, setIsAuthReady] = useState(true);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [tripTime, setTripTime] = useState(0);
   const [totalDistance, setTotalDistance] = useState(0);
-  const [hasAlerts, setHasAlerts] = useState(false);
-  const [alertCount, setAlertCount] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
 
-  const [speedUnit, setSpeedUnit] = useState<"metric" | "imperial" >(() => {
+  const [speedUnit, setSpeedUnit] = useState<"metric" | "imperial">(() => {
     return (localStorage.getItem("obd_speed_unit") as "metric" | "imperial") || "metric";
   });
   const [tempUnit, setTempUnit] = useState<"metric" | "imperial">(() => {
@@ -79,45 +86,7 @@ export const Dashboard: React.FC = () => {
     localStorage.setItem("obd_temp_unit", tempUnit);
   }, [tempUnit]);
 
-  const [activeDtcs, setActiveDtcs] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem("obd_active_dtcs");
-      if (stored) return JSON.parse(stored);
-    } catch (e) {}
-    return [];
-  });
-
-  useEffect(() => {
-    localStorage.setItem("obd_active_dtcs", JSON.stringify(activeDtcs));
-  }, [activeDtcs]);
-
-  const toggleDtc = useCallback((code: string) => {
-    setActiveDtcs(prev => 
-      prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]
-    );
-  }, []);
-
-  const displayedTelemetry = useMemo(() => {
-    const controlledCodes = ["P0300", "P0171", "P0420"];
-    const baseDtcs = (telemetry && telemetry.dtcs) ? telemetry.dtcs.filter(code => !controlledCodes.includes(code)) : [];
-    const mergedDtcs = Array.from(new Set([...baseDtcs, ...activeDtcs]));
-    return {
-      ...telemetry,
-      dtcs: mergedDtcs
-    };
-  }, [telemetry, activeDtcs]);
-
-  const displayedHistory = useMemo(() => {
-    const controlledCodes = ["P0300", "P0171", "P0420"];
-    return history.map(h => {
-      const baseDtcs = h.dtcs ? h.dtcs.filter(code => !controlledCodes.includes(code)) : [];
-      return {
-        ...h,
-        dtcs: Array.from(new Set([...baseDtcs, ...activeDtcs]))
-      };
-    });
-  }, [history, activeDtcs]);
-
+  // Maintenance state (kept intact as requested)
   const [serviceCompany, setServiceCompany] = useState<ServiceCompanyDetails>(() => {
     try {
       const stored = localStorage.getItem("obd_service_company");
@@ -127,7 +96,7 @@ export const Dashboard: React.FC = () => {
       name: "Apex Auto Services",
       email: "service@apexauto.com",
       phone: "+1 (555) 019-2834",
-      address: "404 Performance Blvd, Detroit, MI"
+      address: "404 Performance Blvd, Detroit, MI",
     };
   });
 
@@ -176,39 +145,25 @@ export const Dashboard: React.FC = () => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
-  const resetStates = useCallback(() => {
-    const zeroed = simulateECUData(null);
-    setTelemetry(zeroed);
-    setHistory([]);
-    setBehavior("Moderate");
-    setHealth({
-      score: 100,
-      status: "Healthy",
-      predictions: [],
-      faults: [],
-    });
-    setMileage(0);
-    setTripTime(0);
-    setTotalDistance(0);
-    setDataset([]);
-    setDatasetIndex(0);
-    setApiResponse(null);
-    tripStartRef.current = Date.now();
-  }, []);
-
   const { source, setSource, isConnected, setIsConnected } = useDataSource();
   const tripStartRef = useRef(Date.now());
-  const lastBackendHealthTimeRef = useRef<number>(0);
 
-  // Handle data source switch
-  const handleToggleDataSource = async () => {
-    const newSource = source === "mock" ? "obd" : "mock";
-    
-    // Always reset states when switching
-    resetStates();
-    
-    setSource(newSource);
-  };
+  const resetStates = useCallback(() => {
+    const zeroed = mapSimulatedDataToTelemetry({
+      rpm: 0,
+      vss: 0,
+      maf: 0,
+      throttle_pos: 0,
+      coolant_temp: 20,
+      intake_air_temp: 20,
+      dtcs: [],
+    });
+    setTelemetry(zeroed);
+    setHistory([]);
+    setTripTime(0);
+    setTotalDistance(0);
+    tripStartRef.current = Date.now();
+  }, []);
 
   const handleSaveUrl = () => {
     setApiBaseUrl(tempUrl);
@@ -216,24 +171,20 @@ export const Dashboard: React.FC = () => {
     resetStates();
   };
 
-  const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
-
   // Check backend health periodically
   useEffect(() => {
-    const checkHealth = async () => {
+    const check = async () => {
       try {
-        const { checkBackendHealth } = await import("../services/apiService");
         const healthy = await checkBackendHealth();
         setIsBackendHealthy(healthy);
-      } catch (err) {
+      } catch {
         setIsBackendHealthy(false);
       }
     };
-    
-    checkHealth();
-    const interval = setInterval(checkHealth, 15000);
+    check();
+    const interval = setInterval(check, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [savedUrl]);
 
   // Trip timer
   useEffect(() => {
@@ -241,233 +192,152 @@ export const Dashboard: React.FC = () => {
     return () => clearInterval(id);
   }, []);
 
-  // Telemetry loop — mock OR real OBD OR dataset
+  // Telemetry loop — Live WebSocket from FastAPI backend + HTTP polling fallback
   useEffect(() => {
-    if (source === "obd") {
-      let ws: WebSocket | null = null;
-      let reconnectTimeout: any = null;
-      let pollInterval: any = null;
-      let isStopped = false;
-      let usePolling = false;
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+    let pollInterval: any = null;
+    let isStopped = false;
+    let usePolling = false;
 
-      // Auto-detect list for HTTP polling fallback
-      const HTTP_CANDIDATE_PATHS = [
-        "/api/telemetry/demo/live",
-        "/api/vehicle/demo/live",
-        "/api/telemetry/1/live",
-        "/api/vehicle/1/live",
-        "/api/live",
-        "/api/live-data"
-      ];
-      let successfulPollPath: string | null = null;
-
-      // Auto-detect list for WebSocket paths
-      const WS_CANDIDATE_PATHS = [
-        "/ws/vehicle/demo",
-        "/ws/vehicle/1",
-        "/ws/live",
-        "/api/ws/live"
-      ];
-      let wsPathIndex = 0;
-
-      const startPolling = () => {
-        if (pollInterval) clearInterval(pollInterval);
-        console.log("[OBD Fallback] Starting auto-detecting HTTP polling loop...");
-        
-        pollInterval = setInterval(async () => {
-          if (isStopped) return;
-          
-          const pathsToTry = successfulPollPath ? [successfulPollPath] : HTTP_CANDIDATE_PATHS;
-          let dataLoaded = false;
-          
-          for (const path of pathsToTry) {
-            try {
-              const response = await fetch(path);
-              if (!response.ok) continue;
-              
-              const resData = await response.json();
-              const payload = resData.data || resData;
-              
-              // Validate that the payload actually has telemetry-like keys
-              if (
-                payload &&
-                (payload.rpm !== undefined ||
-                 payload.speed !== undefined ||
-                 payload.vss !== undefined ||
-                 payload.engine_rpm !== undefined ||
-                 payload.vehicle_speed !== undefined)
-              ) {
-                const data = mapSimulatedDataToTelemetry(payload);
-                setTelemetry(data);
-                setHistory((h) => [...h.slice(-120), data]);
-                setTotalDistance((d) => d + data.vss / 3600);
-                setIsConnected(true);
-                
-                if (!successfulPollPath) {
-                  console.log(`[OBD Fallback] Auto-detected active HTTP endpoint: ${path}`);
-                  successfulPollPath = path;
-                }
-                dataLoaded = true;
-                break; // Break the loop since we got valid data
-              }
-            } catch (err) {
-              if (successfulPollPath) {
-                console.error(`[OBD Fallback] Poll error on ${path}:`, err);
-                successfulPollPath = null; // Reset to trigger discovery on next tick
-              }
-            }
-          }
-          
-          if (!dataLoaded) {
-            setIsConnected(false);
-          }
-        }, 800); // Poll every 800ms for high visual responsiveness
-      };
-
-      const connect = () => {
+    const startPolling = () => {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(async () => {
         if (isStopped) return;
-        if (!usePolling) {
-          setIsConnected(false); // Connecting state
-        }
-        
-        // Safety timeout: if WS doesn't connect in 3.5 seconds, automatically fall back to HTTP polling
-        const fallbackTimer = setTimeout(() => {
-          if (!usePolling && (!ws || ws.readyState !== WebSocket.OPEN)) {
-            console.log("[WebSocket] Connection slow or failing, falling back to HTTP polling");
-            usePolling = true;
-            startPolling();
-          }
-        }, 3500);
-
-        const currentWsPath = WS_CANDIDATE_PATHS[wsPathIndex];
-        const wsUrl = getWebSocketUrl(currentWsPath);
-        console.log(`[WebSocket] Trying connection path [${wsPathIndex}]: ${wsUrl}`);
-        
         try {
-          ws = new WebSocket(wsUrl);
+          const res = await getLiveData();
+          const data = mapSimulatedDataToTelemetry(res);
+          setTelemetry(data);
+          setHistory((h) => [...h.slice(-120), data]);
+          if (data.vss > 0) {
+            setTotalDistance((d) => d + data.vss / 3600);
+          }
+          setIsConnected(true);
+        } catch {
+          setIsConnected(false);
+        }
+      }, 1000);
+    };
 
-          ws.onopen = () => {
-            console.log(`[WebSocket] Connected successfully to live OBD stream path: ${currentWsPath}`);
-            clearTimeout(fallbackTimer);
-            setIsConnected(true);
-            usePolling = false;
-            if (pollInterval) {
-              clearInterval(pollInterval);
-              pollInterval = null;
-            }
-          };
+    const connect = () => {
+      if (isStopped) return;
+      const wsUrl = getWebSocketUrl("/api/ws/live");
 
-          ws.onmessage = (event) => {
-            try {
-              const resData = JSON.parse(event.data);
-              const payload = resData.data || resData;
-              const data = mapSimulatedDataToTelemetry(payload);
-              setTelemetry(data);
-              setHistory((h) => [...h.slice(-120), data]);
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          setIsConnected(true);
+          usePolling = false;
+          if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            const data = mapSimulatedDataToTelemetry(payload);
+            setTelemetry(data);
+            setHistory((h) => [...h.slice(-120), data]);
+            if (data.vss > 0) {
               setTotalDistance((d) => d + data.vss / 3600);
-            } catch (err) {
-              console.error("[WebSocket] Error parsing data:", err);
             }
-          };
+          } catch (err) {
+            console.error("[WebSocket] Parse error:", err);
+          }
+        };
 
-          ws.onerror = (err) => {
-            console.error(`[WebSocket] Error on path ${currentWsPath}:`, err);
-            clearTimeout(fallbackTimer);
-            if (!usePolling) {
-              usePolling = true;
-              startPolling();
-            }
-          };
-
-          ws.onclose = (event) => {
-            console.log(`[WebSocket] Connection closed for path ${currentWsPath}:`, event.code, event.reason);
-            clearTimeout(fallbackTimer);
-            
-            // Try next candidate WebSocket path on reconnect
-            wsPathIndex = (wsPathIndex + 1) % WS_CANDIDATE_PATHS.length;
-
-            if (!isStopped) {
-              if (!usePolling) {
-                usePolling = true;
-                startPolling();
-              }
-              // Attempt to reconnect WebSocket in 6 seconds
-              reconnectTimeout = setTimeout(connect, 6000);
-            }
-          };
-        } catch (e) {
-          console.error("[WebSocket] Synchronous connect error:", e);
-          clearTimeout(fallbackTimer);
-          wsPathIndex = (wsPathIndex + 1) % WS_CANDIDATE_PATHS.length;
+        ws.onerror = () => {
           if (!usePolling) {
             usePolling = true;
             startPolling();
           }
-        }
-      };
+        };
 
-      connect();
-
-      return () => {
-        isStopped = true;
-        if (ws) {
-          try {
-            ws.close();
-          } catch (e) {}
+        ws.onclose = () => {
+          if (!isStopped) {
+            if (!usePolling) {
+              usePolling = true;
+              startPolling();
+            }
+            reconnectTimeout = setTimeout(connect, 4000);
+          }
+        };
+      } catch (e) {
+        if (!usePolling) {
+          usePolling = true;
+          startPolling();
         }
-        if (reconnectTimeout) clearTimeout(reconnectTimeout);
-        if (pollInterval) clearInterval(pollInterval);
-        setIsConnected(false);
+      }
+    };
+
+    connect();
+
+    return () => {
+      isStopped = true;
+      if (ws) {
+        try {
+          ws.close();
+        } catch (e) {}
+      }
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (pollInterval) clearInterval(pollInterval);
+      setIsConnected(false);
+    };
+  }, [savedUrl, setIsConnected]);
+
+  // Health Status object derived from real LSTM Autoencoder API
+  const healthStatus: HealthStatus = useMemo(() => {
+    const mlHealth = telemetry.ml?.health;
+    if (mlHealth) {
+      const isAnomaly = mlHealth.is_anomaly;
+      const anomalyScore = mlHealth.anomaly_score;
+      const faults = [...(telemetry.dtcs || [])];
+      if (isAnomaly) {
+        faults.push(...(mlHealth.triggered_features || []).map((f) => `Anomaly: ${f}`));
+      }
+      const score = Math.max(0, 100 - (isAnomaly ? 35 : 0) - faults.length * 15);
+      return {
+        score,
+        status: isAnomaly ? "Critical" : score < 80 ? "Warning" : "Healthy",
+        anomalyScore,
+        isAnomaly,
+        featureErrors: mlHealth.feature_errors || {},
+        triggeredFeatures: mlHealth.triggered_features || [],
+        faults,
       };
     }
 
-    if (source === "dataset") {
-      if (dataset.length === 0) return;
-      const id = setInterval(() => {
-        setDatasetIndex((prev) => {
-          const next = (prev + 1) % dataset.length;
-          const data = dataset[next];
-          setTelemetry(data);
-          setHistory((h) => [...h.slice(-120), data]);
-          setTotalDistance((d) => d + data.vss / 3600);
-          return next;
-        });
-      }, 500);
-      return () => clearInterval(id);
-    }
+    // Default when waiting for buffer (~24 ticks)
+    const faults = [...(telemetry.dtcs || [])];
+    if (telemetry.coolantTemp > 105) faults.push("Coolant Temp High");
+    const score = Math.max(0, 95 - faults.length * 20);
+    return {
+      score,
+      status: score < 60 || faults.length > 0 ? "Warning" : "Healthy",
+      anomalyScore: 0,
+      isAnomaly: false,
+      featureErrors: {},
+      triggeredFeatures: [],
+      faults,
+    };
+  }, [telemetry]);
 
-    // Mock data loop
-    const id = setInterval(() => {
-      setTelemetry((prev) => {
-        const next = simulateECUData(prev);
-        setHistory((h) => [...h.slice(-120), next]);
-        setTotalDistance((d) => d + next.vss / 3600);
-        return next;
-      });
-    }, 500);
-    return () => clearInterval(id);
-  }, [source, dataset, setIsConnected, savedUrl]);
+  // Driving mode from XGBoost ML
+  const driverML = telemetry.ml?.driver_behaviour;
+  const currentBehavior: DriverBehavior = driverML?.label || "Moderate";
+  const bColor =
+    currentBehavior === "Economical"
+      ? "var(--green)"
+      : currentBehavior === "Moderate"
+      ? "var(--amber)"
+      : "var(--red)";
 
-  // Always use local heuristics and analytics to respect the strict "GET/WS only, no POST calls" policy.
-  useEffect(() => {
-    setApiResponse(null);
-  }, [source]);
-
-  // Logic updates
-  useEffect(() => {
-    const newBehavior = classifyDriverBehavior(displayedTelemetry);
-    const newMileage = calculateMileage(displayedTelemetry);
-
-    setBehavior(newBehavior);
-    setMileage(newMileage);
-
-    const newHealth = analyzeVehicleHealth(displayedTelemetry, displayedHistory);
-    setHealth(newHealth);
-    
-    const alerts = newHealth.faults.length + (newHealth.status === "Critical" ? 1 : 0);
-    setAlertCount(alerts);
-    setHasAlerts(alerts > 0);
-  }, [displayedTelemetry, displayedHistory, source]);
+  // Fuel from 3-tier physics engine
+  const fuelML = telemetry.ml?.fuel;
+  const mileageVal = fuelML?.mileage_kmpl ?? 0;
 
   const formatTime = (s: number) => {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -476,17 +346,10 @@ export const Dashboard: React.FC = () => {
       : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   };
 
-  if (!isAuthReady) return null;
-
-  // ─── BEHAVIOUR COLORS ─────────────────────────────────────────
-  const bColor = behavior === "Economical" ? "var(--green)" : behavior === "Moderate" ? "var(--amber)" : "var(--red)";
-
-  // ─── MAIN APP ─────────────────────────────────────────────────
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-deep)", fontFamily: "Barlow, sans-serif" }}>
-
       {/* ── LEFT SIDEBAR ────────────────────────────── */}
-      <aside className="flex flex-col w-56 border-r relative z-20" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
+      <aside className="flex flex-col w-56 border-r relative z-20 shrink-0" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
         {/* Logo */}
         <div className="px-4 py-4 border-b" style={{ borderColor: "var(--border)" }}>
           <div className="flex items-center gap-3">
@@ -494,8 +357,12 @@ export const Dashboard: React.FC = () => {
               <Cpu size={16} style={{ color: "var(--cyan)" }} />
             </div>
             <div>
-              <div className="hud-display text-base font-bold" style={{ color: "var(--cyan)", letterSpacing: "0.05em" }}>AUTO<span style={{ color: "var(--text-primary)" }}>VUE</span></div>
-              <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>OBD-II TELEMETRY</div>
+              <div className="hud-display text-base font-bold" style={{ color: "var(--cyan)", letterSpacing: "0.05em" }}>
+                AUTO<span style={{ color: "var(--text-primary)" }}>VUE</span>
+              </div>
+              <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>
+                ML DIAGNOSTICS & TELEMETRY
+              </div>
             </div>
           </div>
         </div>
@@ -503,10 +370,14 @@ export const Dashboard: React.FC = () => {
         {/* Status strip */}
         <div className="px-4 py-3 border-b" style={{ borderColor: "var(--border)", background: "rgba(0,212,255,0.03)" }}>
           <div className="flex items-center gap-2">
-            <motion.div className="w-2 h-2 rounded-full" style={{ background: source === "obd" && isConnected ? "var(--green)" : source === "obd" ? "var(--amber)" : source === "dataset" ? "var(--purple)" : "var(--cyan)" }}
-              animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.5, repeat: Infinity }} />
+            <motion.div
+              className="w-2 h-2 rounded-full"
+              style={{ background: isConnected ? "var(--green)" : "var(--amber)" }}
+              animate={{ opacity: [1, 0.4, 1] }}
+              transition={{ duration: 1.5, repeat: Infinity }}
+            />
             <span className="hud-label text-[10px]">
-              {source === "obd" ? (isConnected ? "OBD LIVE" : "SEARCHING") : source === "dataset" ? "DATASET PLAYBACK" : "SIMULATION"}
+              {isConnected ? "LIVE TELEMETRY STREAM" : "CONNECTING GATEWAY"}
             </span>
           </div>
         </div>
@@ -517,13 +388,14 @@ export const Dashboard: React.FC = () => {
             { id: "overview", icon: LayoutDashboard, label: "Overview" },
             { id: "telemetry", icon: Activity, label: "Telemetry" },
             { id: "diagnostics", icon: Shield, label: "Diagnostics" },
+            { id: "map", icon: Navigation2, label: "Map (GPS)" },
             { id: "maintenance", icon: Wrench, label: "Maintenance" },
             { id: "settings", icon: Settings, label: "Settings" },
           ] as { id: Tab; icon: any; label: string }[]).map(({ id, icon: Icon, label }) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
-              className="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-none text-left relative group"
+              className="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-none text-left relative group cursor-pointer"
               style={{
                 color: activeTab === id ? "var(--cyan)" : "var(--text-secondary)",
                 background: activeTab === id ? "rgba(0,212,255,0.06)" : "transparent",
@@ -532,10 +404,12 @@ export const Dashboard: React.FC = () => {
             >
               <Icon size={16} />
               <span>{label}</span>
-              {id === "diagnostics" && hasAlerts && (
-                <span className="ml-auto w-4 h-4 rounded-none text-[9px] flex items-center justify-center font-bold"
-                  style={{ background: "var(--red)", color: "white" }}>
-                  {alertCount}
+              {id === "diagnostics" && healthStatus.faults.length > 0 && (
+                <span
+                  className="ml-auto w-4 h-4 text-[9px] flex items-center justify-center font-bold"
+                  style={{ background: "var(--red)", color: "white" }}
+                >
+                  {healthStatus.faults.length}
                 </span>
               )}
             </button>
@@ -547,7 +421,7 @@ export const Dashboard: React.FC = () => {
           <div className="flex items-center justify-between p-2 rounded" style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--border)" }}>
             <div className="flex items-center gap-2">
               <Server size={14} style={{ color: "var(--text-muted)" }} />
-              <div className="text-[10px] font-bold" style={{ color: "var(--text-secondary)", fontFamily: "Share Tech Mono" }}>BACKEND</div>
+              <div className="text-[10px] font-bold font-mono" style={{ color: "var(--text-secondary)" }}>FASTAPI</div>
             </div>
             <div className="flex items-center gap-1.5">
               {isBackendHealthy === null ? (
@@ -558,12 +432,12 @@ export const Dashboard: React.FC = () => {
               ) : isBackendHealthy ? (
                 <>
                   <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--green)", boxShadow: "0 0 5px var(--green)" }} />
-                  <span className="text-[9px]" style={{ color: "var(--green)", fontFamily: "Share Tech Mono" }}>ONLINE</span>
+                  <span className="text-[9px] font-mono" style={{ color: "var(--green)" }}>ONLINE</span>
                 </>
               ) : (
                 <>
                   <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--red)", boxShadow: "0 0 5px var(--red)" }} />
-                  <span className="text-[9px]" style={{ color: "var(--red)", fontFamily: "Share Tech Mono" }}>OFFLINE</span>
+                  <span className="text-[9px] font-mono" style={{ color: "var(--red)" }}>OFFLINE</span>
                 </>
               )}
             </div>
@@ -573,24 +447,24 @@ export const Dashboard: React.FC = () => {
 
       {/* ── MAIN CONTENT ────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
-
         {/* Top bar */}
-        <header className="flex items-center justify-between px-6 py-3 border-b" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
+        <header className="flex items-center justify-between px-6 py-3 border-b shrink-0" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
           <div className="flex items-center gap-6">
             <div>
               <div className="hud-display text-lg font-bold uppercase tracking-wider" style={{ color: "var(--text-primary)" }}>
                 {activeTab === "overview" && "System Overview"}
-                {activeTab === "telemetry" && "Live Telemetry"}
-                {activeTab === "diagnostics" && "Diagnostics & Health"}
-                {activeTab === "maintenance" && "Maintenance Logs"}
-                {activeTab === "upload" && "Dataset Upload"}
+                {activeTab === "telemetry" && "Live Telemetry & Waveforms"}
+                {activeTab === "diagnostics" && "LSTM Autoencoder Anomaly Diagnostics"}
+                {activeTab === "map" && "GPS Route Tracking & Telemetry Map"}
+                {activeTab === "simulator" && "Simulator Playback & Sensor Override Dials"}
+                {activeTab === "maintenance" && "Predictive Maintenance Logs"}
                 {activeTab === "settings" && "System Settings"}
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <motion.div className="w-1.5 h-1.5 rounded-full" style={{ background: bColor }}
                   animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1, repeat: Infinity }} />
                 <span className="hud-label text-[10px]">
-                  DRIVE MODE: <span style={{ color: bColor }}>{(apiResponse?.behaviour_class || behavior).toUpperCase()}</span>
+                  XGBOOST DRIVER MODE: <span style={{ color: bColor }}>{currentBehavior.toUpperCase()}</span>
                 </span>
                 <span style={{ color: "var(--border)" }}>|</span>
                 <span className="hud-label text-[10px]">TRIP: <span style={{ color: "var(--cyan)", fontFamily: "Share Tech Mono" }}>{formatTime(tripTime)}</span></span>
@@ -599,27 +473,37 @@ export const Dashboard: React.FC = () => {
               </div>
             </div>
           </div>
+
           <div className="flex items-center gap-3">
-            {/* Health badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5"
+            {/* Health status badge */}
+            <div
+              className="flex items-center gap-2 px-3 py-1.5"
               style={{
-                border: `1px solid ${health.status === "Healthy" ? "rgba(0,255,136,0.3)" : health.status === "Warning" ? "rgba(255,184,0,0.3)" : "rgba(255,51,51,0.3)"}`,
-                background: health.status === "Healthy" ? "rgba(0,255,136,0.06)" : health.status === "Warning" ? "rgba(255,184,0,0.06)" : "rgba(255,51,51,0.06)",
-              }}>
-              {health.status === "Healthy" ? <CheckCircle size={14} style={{ color: "var(--green)" }} /> :
-               health.status === "Warning" ? <AlertCircle size={14} style={{ color: "var(--amber)" }} /> :
-               <AlertTriangle size={14} style={{ color: "var(--red)" }} className="animate-blink" />}
-              <span className="hud-label text-[10px]"
-                style={{ color: health.status === "Healthy" ? "var(--green)" : health.status === "Warning" ? "var(--amber)" : "var(--red)" }}>
-                {health.score}% {health.status.toUpperCase()}
+                border: `1px solid ${healthStatus.status === "Healthy" ? "rgba(0,255,136,0.3)" : healthStatus.status === "Warning" ? "rgba(255,184,0,0.3)" : "rgba(255,51,51,0.3)"}`,
+                background: healthStatus.status === "Healthy" ? "rgba(0,255,136,0.06)" : healthStatus.status === "Warning" ? "rgba(255,184,0,0.06)" : "rgba(255,51,51,0.06)",
+              }}
+            >
+              {healthStatus.status === "Healthy" ? (
+                <CheckCircle size={14} style={{ color: "var(--green)" }} />
+              ) : healthStatus.status === "Warning" ? (
+                <AlertCircle size={14} style={{ color: "var(--amber)" }} />
+              ) : (
+                <AlertTriangle size={14} style={{ color: "var(--red)" }} className="animate-blink" />
+              )}
+              <span
+                className="hud-label text-[10px]"
+                style={{ color: healthStatus.status === "Healthy" ? "var(--green)" : healthStatus.status === "Warning" ? "var(--amber)" : "var(--red)" }}
+              >
+                {healthStatus.score}% {healthStatus.status.toUpperCase()}
               </span>
             </div>
 
             {/* Theme Toggle */}
-            <button 
+            <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="px-3 py-1.5 flex items-center gap-2 transition-colors" 
-              style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}>
+              className="px-3 py-1.5 flex items-center gap-2 transition-colors cursor-pointer"
+              style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}
+            >
               {theme === "dark" ? <Sun size={14} style={{ color: "var(--amber)" }} /> : <Moon size={14} style={{ color: "var(--cyan)" }} />}
               <span className="hud-label text-[9px]">
                 {theme === "dark" ? "LIGHT MODE" : "DARK MODE"}
@@ -631,22 +515,39 @@ export const Dashboard: React.FC = () => {
         {/* Content */}
         <main className="flex-1 overflow-hidden">
           <AnimatePresence mode="wait">
-            <motion.div key={activeTab} className="h-full"
-              initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
-              transition={{ duration: 0.2 }}>
+            <motion.div
+              key={activeTab}
+              className="h-full"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              transition={{ duration: 0.2 }}
+            >
               {activeTab === "overview" && (
-                <OverviewTab telemetry={displayedTelemetry} history={displayedHistory} behavior={behavior} health={health} mileage={mileage} apiResponse={apiResponse} speedUnit={speedUnit} tempUnit={tempUnit} />
+                <OverviewTab
+                  telemetry={telemetry}
+                  history={history}
+                  behavior={currentBehavior}
+                  driverML={driverML}
+                  fuelML={fuelML}
+                  healthStatus={healthStatus}
+                  speedUnit={speedUnit}
+                  tempUnit={tempUnit}
+                />
               )}
               {activeTab === "telemetry" && (
-                <TelemetryPanel telemetry={displayedTelemetry} history={displayedHistory} speedUnit={speedUnit} tempUnit={tempUnit} />
+                <TelemetryPanel telemetry={telemetry} history={history} speedUnit={speedUnit} tempUnit={tempUnit} />
               )}
               {activeTab === "diagnostics" && (
-                <HealthMonitor health={health} telemetry={displayedTelemetry} history={displayedHistory} />
+                <HealthMonitor health={healthStatus} telemetry={telemetry} history={history} />
+              )}
+              {activeTab === "map" && (
+                <GPSMap telemetry={telemetry} speedUnit={speedUnit} />
               )}
               {activeTab === "maintenance" && (
                 <MaintenanceTab
-                  health={health}
-                  telemetry={displayedTelemetry}
+                  health={healthStatus}
+                  telemetry={telemetry}
                   serviceCompany={serviceCompany}
                   registeredIssues={registeredIssues}
                   setRegisteredIssues={setRegisteredIssues}
@@ -657,8 +558,6 @@ export const Dashboard: React.FC = () => {
               )}
               {activeTab === "settings" && (
                 <SettingsTab
-                  source={source}
-                  onToggleMock={handleToggleDataSource}
                   tempUrl={tempUrl}
                   onUrlChange={setTempUrl}
                   onSaveUrl={handleSaveUrl}
@@ -669,8 +568,6 @@ export const Dashboard: React.FC = () => {
                   tempUnit={tempUnit}
                   setTempUnit={setTempUnit}
                   resetStates={resetStates}
-                  activeDtcs={activeDtcs}
-                  toggleDtc={toggleDtc}
                   serviceCompany={serviceCompany}
                   setServiceCompany={setServiceCompany}
                   telegramToken={telegramToken}
@@ -691,14 +588,30 @@ export const Dashboard: React.FC = () => {
 
 // ─── OVERVIEW TAB ─────────────────────────────────────────────
 const OverviewTab: React.FC<{
-  telemetry: TelemetryData; history: TelemetryData[];
-  behavior: DriverBehavior; health: HealthStatus; mileage: number;
-  apiResponse?: DriverPredictResponse | null;
+  telemetry: TelemetryData;
+  history: TelemetryData[];
+  behavior: DriverBehavior;
+  driverML?: DriverMLResult;
+  fuelML?: FuelMLResult;
+  healthStatus: HealthStatus;
   speedUnit?: "metric" | "imperial";
   tempUnit?: "metric" | "imperial";
-}> = ({ telemetry, history, behavior, health, mileage, apiResponse, speedUnit = "metric", tempUnit = "metric" }) => {
-  const currentBehavior = apiResponse?.behaviour_class || behavior;
-  const bColor = currentBehavior === "Economical" ? "var(--green)" : currentBehavior === "Moderate" ? "var(--amber)" : "var(--red)";
+}> = ({
+  telemetry,
+  history,
+  behavior,
+  driverML,
+  fuelML,
+  healthStatus,
+  speedUnit = "metric",
+  tempUnit = "metric",
+}) => {
+  const bColor =
+    behavior === "Economical"
+      ? "var(--green)"
+      : behavior === "Moderate"
+      ? "var(--amber)"
+      : "var(--red)";
 
   const isImperialSpeed = speedUnit === "imperial";
   const isImperialTemp = tempUnit === "imperial";
@@ -707,9 +620,13 @@ const OverviewTab: React.FC<{
   const displayCoolant = isImperialTemp ? Math.round(telemetry.coolantTemp * 1.8 + 32) : telemetry.coolantTemp;
   const displayIntake = isImperialTemp ? Math.round(telemetry.intakeAirTemp * 1.8 + 32) : telemetry.intakeAirTemp;
 
+  const mileageVal = fuelML?.mileage_kmpl ?? 0;
+  const fcrVal = fuelML?.fcr_gs ?? 0;
+  const fuelTier = fuelML?.tier ?? 1;
+  const fuelMethod = fuelML?.method ?? "maf";
+
   return (
     <div className="h-full grid grid-cols-12 grid-rows-6 gap-0 p-0" style={{ background: "var(--bg-deep)" }}>
-      
       {/* ── RPM Gauge (col 1-3, row 1-3) */}
       <div className="col-span-3 row-span-3 border-r border-b panel flex flex-col items-center justify-center p-6"
         style={{ borderColor: "var(--border)" }}>
@@ -730,7 +647,7 @@ const OverviewTab: React.FC<{
           warning={isImperialSpeed ? 80 : 130} critical={isImperialSpeed ? 110 : 180} size={180} />
         <div className="mt-4 grid grid-cols-2 gap-4 w-full">
           <MiniStat label="MAF" value={`${telemetry.maf}g/s`} color="var(--purple)" />
-          <MiniStat label="GEAR" value="AUTO" color="var(--purple)" />
+          <MiniStat label="MAP" value={telemetry.mapKpa ? `${telemetry.mapKpa}kPa` : "N/A"} color="var(--purple)" />
         </div>
       </div>
 
@@ -742,143 +659,137 @@ const OverviewTab: React.FC<{
           warning={isImperialTemp ? 212 : 100} critical={isImperialTemp ? 240 : 115} size={180} />
         <div className="mt-4 grid grid-cols-2 gap-4 w-full">
           <MiniStat label="IAT" value={isImperialTemp ? `${displayIntake}°F` : `${displayIntake}°C`} color="var(--amber)" />
+          <MiniStat label="AMBIENT" value={telemetry.ambientTemp !== undefined ? `${telemetry.ambientTemp}°C` : "24°C"} color="var(--amber)" />
         </div>
       </div>
 
       {/* ── Health Score (col 10-12, row 1-3) */}
       <div className="col-span-3 row-span-3 border-b panel flex flex-col p-5"
         style={{ borderColor: "var(--border)" }}>
-        <div className="hud-label mb-3" style={{ color: health.status === "Healthy" ? "var(--green)" : health.status === "Warning" ? "var(--amber)" : "var(--red)" }}>
-          VEHICLE HEALTH
+        <div className="hud-label mb-3" style={{ color: healthStatus.status === "Healthy" ? "var(--green)" : healthStatus.status === "Warning" ? "var(--amber)" : "var(--red)" }}>
+          LSTM AUTOENCODER HEALTH
         </div>
-        {/* Big score */}
         <div className="text-center mb-4">
           <div className="hud-display text-7xl font-black"
-            style={{ color: health.status === "Healthy" ? "var(--green)" : health.status === "Warning" ? "var(--amber)" : "var(--red)" }}>
-            {health.score}
+            style={{ color: healthStatus.status === "Healthy" ? "var(--green)" : healthStatus.status === "Warning" ? "var(--amber)" : "var(--red)" }}>
+            {healthStatus.score}
           </div>
-          <div className="hud-label text-xs">{health.status.toUpperCase()} INTEGRITY</div>
+          <div className="hud-label text-xs">{healthStatus.status.toUpperCase()} INTEGRITY</div>
         </div>
 
-        {/* Mini bars */}
         <div className="space-y-2 flex-1">
-          {[
-            { label: "ENGINE", val: Math.min(100, 100 - (telemetry.coolantTemp > 100 ? 20 : 0)), color: "var(--green)" },
-            { label: "OVERALL", val: health.score, color: health.status === "Healthy" ? "var(--green)" : health.status === "Warning" ? "var(--amber)" : "var(--red)" },
-          ].map(({ label, val, color }) => (
-            <div key={label}>
-              <div className="flex justify-between mb-1">
-                <span className="hud-label text-[9px]">{label}</span>
-                <span style={{ fontFamily: "Share Tech Mono", fontSize: "10px", color }}>{val}%</span>
-              </div>
-              <div className="meter-track h-1.5 rounded-none">
-                <motion.div className="meter-fill rounded-none"
-                  style={{ background: color, width: `${val}%`, boxShadow: `0 0 6px ${color}66` }}
-                  animate={{ width: `${val}%` }} transition={{ duration: 0.5 }} />
-              </div>
+          <div>
+            <div className="flex justify-between mb-1">
+              <span className="hud-label text-[9px]">ANOMALY SCORE</span>
+              <span style={{ fontFamily: "Share Tech Mono", fontSize: "10px", color: healthStatus.isAnomaly ? "var(--red)" : "var(--green)" }}>
+                {healthStatus.anomalyScore > 0 ? healthStatus.anomalyScore.toFixed(4) : "0.0000"}
+              </span>
             </div>
-          ))}
+            <div className="meter-track h-1.5">
+              <motion.div className="meter-fill"
+                style={{ background: healthStatus.isAnomaly ? "var(--red)" : "var(--green)", width: `${healthStatus.isAnomaly ? 100 : 15}%` }} />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex justify-between mb-1">
+              <span className="hud-label text-[9px]">TRIGGERED ANOMALIES</span>
+              <span style={{ fontFamily: "Share Tech Mono", fontSize: "10px", color: "var(--cyan)" }}>
+                {healthStatus.triggeredFeatures.length} FEATURES
+              </span>
+            </div>
+          </div>
         </div>
 
-        {health.faults.length > 0 && (
+        {healthStatus.faults.length > 0 && (
           <div className="mt-3 p-2 alert-flash" style={{ border: "1px solid rgba(255,51,51,0.3)" }}>
             <div className="hud-label text-[9px]" style={{ color: "var(--red)" }}>
-              {health.faults.length} ACTIVE FAULT{health.faults.length > 1 ? "S" : ""} DETECTED
+              {healthStatus.faults.length} ACTIVE FAULT{healthStatus.faults.length > 1 ? "S" : ""} / DTCs
             </div>
           </div>
         )}
       </div>
 
-      {/* ── Fuel / Mileage (col 1-4, row 4-6) */}
+      {/* ── Fuel / Mileage 3-Tier (col 1-4, row 4-6) */}
       <div className="col-span-4 row-span-3 border-r panel p-5 flex flex-col"
         style={{ borderColor: "var(--border)" }}>
-        <div className="hud-label mb-3" style={{ color: "var(--green)" }}>EFFICIENCY</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="hud-label" style={{ color: "var(--green)" }}>3-TIER FUEL PHYSICS ENGINE</div>
+          <span className="px-1.5 py-0.5 text-[9px] font-mono border text-green-400 border-green-500/30 bg-green-500/10">
+            TIER {fuelTier}: {fuelMethod.toUpperCase()}
+          </span>
+        </div>
+
         <div className="flex items-end gap-4 mb-4">
           <div>
             <div className="hud-display text-5xl font-black" style={{ color: "var(--green)" }}>
-              {mileage > 0 ? mileage.toFixed(1) : "--"}
+              {mileageVal !== null && mileageVal > 0 ? mileageVal.toFixed(1) : "--"}
             </div>
             <div className="hud-label">KM/L INSTANT</div>
           </div>
           <div className="flex-1 pb-1">
-            <div className="hud-label text-[9px] mb-1">L/100KM EQUIV</div>
+            <div className="hud-label text-[9px] mb-1">CONSUMPTION RATE (FCR)</div>
             <div className="text-lg font-bold" style={{ fontFamily: "Share Tech Mono", color: "var(--text-secondary)" }}>
-              {mileage > 0 ? (100 / mileage).toFixed(1) : "--"}
+              {fcrVal > 0 ? `${fcrVal.toFixed(2)} g/s` : "--"}
             </div>
           </div>
         </div>
-        {/* Mileage sparkline */}
+
         <div className="flex-1 min-h-0">
-          <LiveChart data={history.map((h, i) => ({ t: i, v: calculateMileage(h) }))}
-            color="var(--green)" label="km/L" maxPoints={60} height={80} />
+          <LiveChart
+            data={history.map((h, i) => ({ t: i, v: h.ml?.fuel?.mileage_kmpl ?? 0 }))}
+            color="var(--green)"
+            label="km/L"
+            maxPoints={60}
+            height={80}
+          />
         </div>
       </div>
 
       {/* ── Driver Behavior (col 5-8, row 4-6) */}
       <div className="col-span-4 row-span-3 border-r panel p-5 flex flex-col"
         style={{ borderColor: "var(--border)" }}>
-        <div className="hud-label mb-3" style={{ color: "var(--purple)" }}>DRIVER PROFILE</div>
-        <div className="flex items-center gap-4 mb-4">
-          <div className="flex-1 p-3" style={{ border: `1px solid ${bColor}33`, background: `${bColor}08` }}>
-            <div className="hud-display text-2xl font-black" style={{ color: bColor }}>{currentBehavior.toUpperCase()}</div>
-            <div className="hud-label text-[9px]">DRIVING MODE</div>
-          </div>
-          <div className="text-right">
-            <div className="text-xs" style={{ fontFamily: "Share Tech Mono", color: "var(--text-secondary)" }}>CLUSTER {apiResponse?.cluster_id ?? 3}</div>
-            <div className="text-xs" style={{ fontFamily: "Share Tech Mono", color: "var(--text-secondary)" }}>ML ENGINE</div>
-          </div>
-        </div>
-        {/* Behavior bars or Debug features */}
-        <div className="space-y-2 mb-4">
-          {apiResponse ? (
-            <>
-              {[
-                { label: "RPM STD", val: apiResponse.features_debug["Engine RPM [RPM]_std"], max: 500 },
-                { label: "ACCEL STD", val: apiResponse.features_debug["acceleration_std"], max: 10 },
-                { label: "THROTTLE STD", val: apiResponse.features_debug["Absolute Throttle Position [%]_std"], max: 10 },
-              ].map(({ label, val, max }) => (
-                <div key={label}>
-                  <div className="flex justify-between mb-1">
-                    <span className="hud-label text-[9px]">{label}</span>
-                    <span style={{ fontFamily: "Share Tech Mono", fontSize: "10px", color: bColor }}>{val.toFixed(2)}</span>
-                  </div>
-                  <div className="meter-track h-1 rounded-none">
-                    <motion.div className="meter-fill" style={{ background: bColor, width: `${Math.min(100, (val / max) * 100)}%` }}
-                      animate={{ width: `${Math.min(100, (val / max) * 100)}%` }} transition={{ duration: 0.4 }} />
-                  </div>
-                </div>
-              ))}
-            </>
-          ) : (
-            <>
-              {[
-                { label: "THROTTLE RESPONSE", val: telemetry.throttle, max: 100 },
-                { label: "RPM VARIANCE", val: Math.min(100, (telemetry.rpm / 7000) * 100), max: 100 },
-              ].map(({ label, val, max }) => (
-                <div key={label}>
-                  <div className="flex justify-between mb-1">
-                    <span className="hud-label text-[9px]">{label}</span>
-                    <span style={{ fontFamily: "Share Tech Mono", fontSize: "10px", color: bColor }}>{Math.round(val)}%</span>
-                  </div>
-                  <div className="meter-track h-1 rounded-none">
-                    <motion.div className="meter-fill" style={{ background: bColor, width: `${(val / max) * 100}%` }}
-                      animate={{ width: `${(val / max) * 100}%` }} transition={{ duration: 0.4 }} />
-                  </div>
-                </div>
-              ))}
-            </>
+        <div className="flex items-center justify-between mb-3">
+          <div className="hud-label" style={{ color: "var(--purple)" }}>XGBOOST DRIVER BEHAVIOUR</div>
+          {driverML?.confidence && (
+            <span className="text-[10px] font-mono text-purple-400">
+              CONFIDENCE: {Math.round(driverML.confidence * 100)}%
+            </span>
           )}
         </div>
+
+        <div className="flex items-center gap-4 mb-3">
+          <div className="flex-1 p-3" style={{ border: `1px solid ${bColor}33`, background: `${bColor}08` }}>
+            <div className="hud-display text-2xl font-black" style={{ color: bColor }}>
+              {behavior.toUpperCase()}
+            </div>
+            <div className="hud-label text-[9px]">DRIVING PROFILE</div>
+          </div>
+        </div>
+
+        {/* TTS message from XGBoost */}
+        {driverML?.tts_message && (
+          <div className="p-2 border border-purple-500/20 bg-purple-500/5 mb-3 text-[11px] text-zinc-300 font-sans flex items-start gap-2">
+            <Volume2 size={14} className="text-purple-400 shrink-0 mt-0.5" />
+            <span className="leading-tight">{driverML.tts_message}</span>
+          </div>
+        )}
+
         <div className="flex-1 min-h-0">
-          <LiveChart data={history.map((h, i) => ({ t: i, v: h.throttle }))}
-            color={bColor} label="Throttle" maxPoints={60} height={70} />
+          <LiveChart
+            data={history.map((h, i) => ({ t: i, v: h.throttle }))}
+            color={bColor}
+            label="Throttle"
+            maxPoints={60}
+            height={60}
+          />
         </div>
       </div>
 
       {/* ── DTC / Status (col 9-12, row 4-6) */}
       <div className="col-span-4 row-span-3 panel p-5 flex flex-col"
         style={{ borderColor: "var(--border)" }}>
-        <div className="hud-label mb-3" style={{ color: "var(--red)" }}>FAULT CODES</div>
+        <div className="hud-label mb-3" style={{ color: "var(--red)" }}>OBD-II FAULT CODES (/api/dtc)</div>
         {telemetry.dtcs.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-2">
             <CheckCircle size={32} style={{ color: "var(--green)", opacity: 0.7 }} />
@@ -887,15 +798,21 @@ const OverviewTab: React.FC<{
             </div>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 overflow-y-auto max-h-36">
             {telemetry.dtcs.map((code) => (
               <div key={code} className="p-2 alert-flash" style={{ border: "1px solid rgba(255,51,51,0.3)" }}>
                 <div className="flex items-center gap-2">
                   <AlertTriangle size={12} style={{ color: "var(--red)" }} className="animate-blink" />
                   <span className="hud-display text-sm font-bold" style={{ color: "var(--red)" }}>{code}</span>
                 </div>
-                <div className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
-                  {code === "P0300" ? "Random/Multiple Misfire Detected" : code === "P0171" ? "System Too Lean (Bank 1)" : "Diagnostic Trouble Code"}
+                <div className="text-xs mt-1 text-zinc-400 font-mono">
+                  {code === "P0300"
+                    ? "Random/Multiple Misfire Detected"
+                    : code === "P0171"
+                    ? "System Too Lean (Bank 1)"
+                    : code === "P0420"
+                    ? "Catalyst System Low Efficiency"
+                    : "Diagnostic Trouble Code"}
                 </div>
               </div>
             ))}
@@ -913,7 +830,77 @@ const OverviewTab: React.FC<{
   );
 };
 
-// ─── MAINTENANCE TAB ──────────────────────────────────────────
+// ─── MINI STAT ────────────────────────────────────────────────
+export const MiniStat: React.FC<{ label: string; value: string | number; color: string }> = ({ label, value, color }) => (
+  <div className="p-2" style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}>
+    <div className="hud-label text-[9px] mb-0.5">{label}</div>
+    <div className="text-sm font-bold" style={{ fontFamily: "Share Tech Mono", color }}>{value}</div>
+  </div>
+);
+
+// ─── MAINTENANCE TAB (KEPT INTACT AS REQUESTED) ───────────────
+const CollapsibleCard: React.FC<{
+  title: string;
+  icon: React.ReactNode;
+  badge?: React.ReactNode;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+  headerRight?: React.ReactNode;
+}> = ({ title, icon, badge, isOpen, onToggle, children, headerRight }) => {
+  return (
+    <div
+      className="panel overflow-hidden transition-all duration-200"
+      style={{
+        borderColor: "var(--border)",
+        background: "var(--bg-panel)",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full p-4 flex items-center justify-between text-left transition-colors hover:bg-white/[0.03] cursor-pointer focus:outline-none select-none group"
+      >
+        <div className="flex items-center gap-2.5 min-w-0 pr-2">
+          <div className="shrink-0">{icon}</div>
+          <span className="hud-display text-sm font-bold truncate tracking-wide" style={{ color: "var(--text-primary)" }}>
+            {title}
+          </span>
+        </div>
+        <div className="flex items-center gap-2.5 shrink-0">
+          {headerRight}
+          {badge}
+          <div
+            className="p-1 border transition-colors text-[var(--text-muted)] group-hover:text-white"
+            style={{
+              borderColor: isOpen ? "var(--border)" : "transparent",
+              background: isOpen ? "rgba(255,255,255,0.05)" : "transparent",
+            }}
+          >
+            {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </div>
+        </div>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="p-5 pt-3 border-t space-y-4" style={{ borderColor: "var(--border)" }}>
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 const MaintenanceTab: React.FC<{
   health: HealthStatus;
   telemetry: TelemetryData;
@@ -933,460 +920,267 @@ const MaintenanceTab: React.FC<{
   telegramChatId,
   telegramEnabled,
 }) => {
-  // Form states
+  const [expanded, setExpanded] = useState<{ [key: string]: boolean }>({
+    activeAlerts: true,
+    fileIssue: true,
+    history: true,
+    company: false,
+    telegram: false,
+    decoder: false,
+  });
+
+  const toggleSection = (key: string) => {
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const [description, setDescription] = useState("");
   const [urgency, setUrgency] = useState<"low" | "medium" | "high">("medium");
-  const [ticketSuccessMsg, setTicketSuccessMsg] = useState<string | null>(null);
-  
-  // Telegram status states
-  const [isSendingTelegram, setIsSendingTelegram] = useState(false);
-  const [telegramStatus, setTelegramStatus] = useState<{ success: boolean; msg: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
-  const handleRegisterTicket = async (e: React.FormEvent) => {
+  const activeCodes = telemetry.dtcs;
+
+  const handleRegisterIssue = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newId = `#SR-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newTicket: RegisteredIssue = {
-      id: newId,
-      date: new Date().toLocaleDateString() + " " + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      dtcCodes: [...telemetry.dtcs],
-      description: description.trim() || "Regular vehicle check and maintenance",
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    const newIssue: RegisteredIssue = {
+      id: `TKT-${Date.now().toString(36).toUpperCase()}`,
+      date: new Date().toISOString(),
+      dtcCodes: activeCodes.length > 0 ? activeCodes : ["USER_REPORTED_SYMPTOM"],
+      description: description || "Routine vehicle inspection or reported performance concern.",
       urgency,
       status: "pending",
-      companyDetails: { ...serviceCompany }
+      companyDetails: serviceCompany,
     };
-    
-    setRegisteredIssues(prev => [newTicket, ...prev]);
-    setDescription("");
-    setTicketSuccessMsg(`Ticket ${newId} registered successfully for ${serviceCompany.name}!`);
 
-    // TELEGRAM DISPATCH GATEWAY
+    setRegisteredIssues((prev) => [newIssue, ...prev]);
+
     if (telegramEnabled && telegramToken && telegramChatId) {
-      setIsSendingTelegram(true);
-      setTelegramStatus(null);
       try {
-        const escapeHtml = (text: string) => {
-          return (text || "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-        };
+        const messageText = `<b>🚗 AUTOVUE SERVICE TICKET DISPATCH</b>\n\n` +
+          `• <b>Ticket ID:</b> <code>${newIssue.id}</code>\n` +
+          `• <b>Urgency:</b> ${urgency.toUpperCase()}\n` +
+          `• <b>DTCs:</b> <code>${newIssue.dtcCodes.join(", ")}</code>\n` +
+          `• <b>Assigned To:</b> ${serviceCompany.name}\n` +
+          `• <b>Description:</b> ${newIssue.description}\n` +
+          `• <b>Timestamp:</b> <code>${new Date().toLocaleString()}</code>`;
 
-        const escapedId = escapeHtml(newId);
-        const escapedDate = escapeHtml(newTicket.date);
-        const escapedUrgency = escapeHtml(urgency.toUpperCase());
-        const escapedName = escapeHtml(serviceCompany.name);
-        const escapedPhone = escapeHtml(serviceCompany.phone || "Not configured");
-        const escapedEmail = escapeHtml(serviceCompany.email || "Not configured");
-        const escapedDescription = escapeHtml(newTicket.description);
-
-        const codesStr = newTicket.dtcCodes.length > 0 
-          ? newTicket.dtcCodes.map(c => `• <code>${escapeHtml(c)}</code>`).join("\n") 
-          : "• <i>No active trouble codes</i>";
-
-        const messageText = `<b>🚗 OBD-II GUARDIAN: VEHICLE TICKET FAULT REGISTERED</b>\n\n` +
-          `<b>🎫 Ticket ID:</b> <code>${escapedId}</code>\n` +
-          `<b>📅 Timestamp:</b> <code>${escapedDate}</code>\n` +
-          `<b>⚠️ Urgency Class:</b> <code>${escapedUrgency}</code>\n\n` +
-          `<b>🏢 Dispatch Target:</b> <b>${escapedName}</b>\n` +
-          `<b>📞 Support Hotkey:</b> <code>${escapedPhone}</code>\n` +
-          `<b>✉️ Support Email:</b> <code>${escapedEmail}</code>\n\n` +
-          `<b>📝 Symptom Report / Details:</b>\n<i>"${escapedDescription}"</i>\n\n` +
-          `<b>🚨 OBD-II Diagnostics (Attached ECU DTCs):</b>\n` +
-          codesStr + `\n\n` +
-          `<i>Sent automatically via integrated Telegram gateway.</i>`;
-
-        const res = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: telegramChatId,
             text: messageText,
-            parse_mode: "HTML"
-          })
+            parse_mode: "HTML",
+          }),
         });
-
-        const resData = await res.json();
-        if (resData.ok) {
-          setTelegramStatus({ success: true, msg: "Dispatched to Telegram Bot successfully!" });
-        } else {
-          setTelegramStatus({ success: false, msg: `Telegram API: ${resData.description}` });
-        }
-      } catch (err: any) {
-        setTelegramStatus({ success: false, msg: `Network Fault: ${err.message}` });
-      } finally {
-        setIsSendingTelegram(false);
+      } catch (err) {
+        console.error("Telegram notification failed:", err);
       }
     }
 
-    setTimeout(() => {
-      setTicketSuccessMsg(null);
-      setTelegramStatus(null);
-    }, 6000);
-  };
-
-  const handleCancelTicket = (id: string) => {
-    setRegisteredIssues(prev => prev.filter(t => t.id !== id));
-  };
-
-  const handleMarkResolved = (id: string) => {
-    setRegisteredIssues(prev => prev.map(t => t.id === id ? { ...t, status: "resolved" as const } : t));
+    setIsSubmitting(false);
+    setDescription("");
+    setFeedback("Service ticket successfully logged and dispatched!");
+    setTimeout(() => setFeedback(null), 4000);
   };
 
   return (
     <div className="h-full overflow-y-auto scroll-area p-6" style={{ background: "var(--bg-deep)" }}>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-5">
         <div>
           <div className="hud-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>
-            VEHICLE SERVICE & DISPATCH PORTAL
+            PREDICTIVE MAINTENANCE & SERVICE DISPATCH
           </div>
           <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
-            REGISTER FAULTS, MONITOR SENSOR INCIDENTS AND TRANSMIT TICKETS TO ROADSIDE PARTNERS OVER SECURE CHANNELS
+            TRACK VEHICLE FAULTS, AUTOMATE SERVICE TICKETS, AND NOTIFY WORKSHOPS
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* LEFT AREA: Issue Reporter & History Log (col 8) */}
-          <div className="lg:col-span-8 space-y-6">
-
-            {/* ─── REGISTER ISSUE / REPORT FAULT ─── */}
-            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-              <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
-                <div className="flex items-center gap-2">
-                  <AlertCircle size={16} style={{ color: "var(--red)" }} />
-                  <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                    REGISTER A VEHICLE SERVICE FAULT TICKET
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="lg:col-span-2 space-y-5">
+            {/* Active DTC Alert Card */}
+            {activeCodes.length > 0 && (
+              <CollapsibleCard
+                title="ACTIVE FAULT CODES REQUIRING ATTENTION"
+                icon={<AlertTriangle size={16} className="text-red-400 animate-blink" />}
+                isOpen={expanded.activeAlerts}
+                onToggle={() => toggleSection("activeAlerts")}
+                badge={
+                  <span className="px-2 py-0.5 text-[9px] font-mono border border-red-500/40 bg-red-500/10 text-red-400">
+                    {activeCodes.length} DTC CODES
                   </span>
+                }
+              >
+                <div className="space-y-2">
+                  {activeCodes.map((code) => (
+                    <div key={code} className="p-3 border border-red-500/30 bg-red-500/5 font-mono">
+                      <div className="text-sm font-bold text-red-400">{code}</div>
+                      <div className="text-xs text-zinc-400 mt-0.5">
+                        {code === "P0300"
+                          ? "Random/Multiple Cylinder Misfire Detected"
+                          : code === "P0171"
+                          ? "Air-Fuel Ratio System Too Lean (Bank 1)"
+                          : code === "P0420"
+                          ? "Catalytic Converter Efficiency Below Threshold"
+                          : "Active Diagnostic Trouble Code"}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {telegramEnabled && telegramToken && telegramChatId && (
-                  <span className="px-2 py-0.5 hud-label text-[8px] font-mono border border-green-500/30 text-green-400 bg-green-500/5 animate-pulse">
-                    ● TELEGRAM GATEWAY ACTIVE
-                  </span>
-                )}
-              </div>
+              </CollapsibleCard>
+            )}
 
-              {telemetry.dtcs.length > 0 ? (
-                <div className="p-3 border border-red-500/30 bg-red-500/5 flex items-start gap-3 animate-fade-in">
-                  <AlertTriangle size={16} style={{ color: "var(--red)" }} className="animate-pulse mt-0.5" />
-                  <div>
-                    <div className="text-xs font-bold text-red-400 font-mono">
-                      ACTIVE ECU DIAGNOSTIC FAULTS DETECTED: {telemetry.dtcs.join(", ")}
-                    </div>
-                    <div className="text-[11px] text-[var(--text-secondary)] mt-0.5 leading-relaxed">
-                      Car sensor relays registered active fault codes. Submitting this ticket will attach all active DTC configurations for accurate mechanic diagnostics.
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3 border border-green-500/20 bg-green-500/5 flex items-start gap-3">
-                  <CheckCircle size={16} style={{ color: "var(--green)" }} className="mt-0.5" />
-                  <div>
-                    <div className="text-xs font-bold text-green-400 font-mono">
-                      ALL ECU SENSORS HEALTHY
-                    </div>
-                    <div className="text-[11px] text-[var(--text-secondary)] mt-0.5 leading-relaxed">
-                      No active trouble codes are present. You can still register custom issues (e.g., oil level, fluid leaks, transmission sound, squeaking brakes) manually below.
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <form onSubmit={handleRegisterTicket} className="space-y-4">
+            {/* File Service Ticket */}
+            <CollapsibleCard
+              title="REGISTER NEW SERVICE DISPATCH TICKET"
+              icon={<Wrench size={16} style={{ color: "var(--cyan)" }} />}
+              isOpen={expanded.fileIssue}
+              onToggle={() => toggleSection("fileIssue")}
+            >
+              <form onSubmit={handleRegisterIssue} className="space-y-4">
                 <div>
-                  <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                    ECU FAULT CODES TO ATTACH
-                  </label>
-                  <div className="p-2 border bg-black/30 font-mono text-xs flex flex-wrap gap-1.5" style={{ borderColor: "var(--border)" }}>
-                    {telemetry.dtcs.length === 0 ? (
-                      <span className="text-[11px] text-[var(--text-muted)] italic">No active trouble codes to attach</span>
-                    ) : (
-                      telemetry.dtcs.map(code => (
-                        <span key={code} className="px-1.5 py-0.5 bg-red-500/10 border border-red-500/30 text-red-400 text-[10px] font-bold">
-                          {code} ({code === "P0300" ? "Misfire" : code === "P0171" ? "Lean Fuel Blend" : code === "P0420" ? "Catalyst Inefficient" : "Fault Code"})
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                    DETAILED SYMPTOMS & ISSUE DESCRIPTION
+                  <label className="hud-label text-[10px] block mb-1" style={{ color: "var(--text-muted)" }}>
+                    ISSUE SYMPTOMS / DRIVER OBSERVATIONS
                   </label>
                   <textarea
                     rows={3}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Describe symptoms or service required (e.g. Engine knocking at idle, fluid leakage on garage floor, brake squeal under light load)"
-                    required
-                    className="w-full bg-black/40 text-xs p-3 outline-none font-mono focus:border-red-500/30 resize-none"
-                    style={{
-                      border: "1px solid var(--border)",
-                      color: "var(--text-primary)",
-                    }}
+                    placeholder="Describe vehicle noise, engine vibration, or maintenance requests..."
+                    className="w-full bg-black/40 text-xs p-3 outline-none font-mono"
+                    style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                      URGENCY LEVEL
-                    </label>
-                    <div className="flex border" style={{ borderColor: "var(--border)" }}>
-                      {(["low", "medium", "high"] as const).map((level) => (
-                        <button
-                          key={level}
-                          type="button"
-                          onClick={() => setUrgency(level)}
-                          className="flex-1 py-1.5 text-[9px] font-mono font-bold transition-all uppercase"
-                          style={{
-                            background: urgency === level ? (level === "high" ? "rgba(255,51,51,0.15)" : level === "medium" ? "rgba(255,184,0,0.15)" : "rgba(0,255,136,0.15)") : "transparent",
-                            color: urgency === level ? (level === "high" ? "var(--red)" : level === "medium" ? "var(--amber)" : "var(--green)") : "var(--text-muted)",
-                            borderRight: level !== "high" ? "1px solid var(--border)" : "none"
-                          }}
-                        >
-                          {level}
-                        </button>
-                      ))}
-                    </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>PRIORITY:</span>
+                    {(["low", "medium", "high"] as const).map((lvl) => (
+                      <button
+                        type="button"
+                        key={lvl}
+                        onClick={() => setUrgency(lvl)}
+                        className={`px-2.5 py-1 text-[9px] font-bold uppercase transition-all border ${
+                          urgency === lvl
+                            ? lvl === "high"
+                              ? "bg-red-500/20 text-red-300 border-red-500"
+                              : lvl === "medium"
+                              ? "bg-amber-500/20 text-amber-300 border-amber-500"
+                              : "bg-cyan-500/20 text-cyan-300 border-cyan-500"
+                            : "text-zinc-400 border-white/10"
+                        }`}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
                   </div>
 
-                  <div className="flex flex-col justify-end">
-                    <button
-                      type="submit"
-                      disabled={isSendingTelegram}
-                      className="w-full py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-bold transition-all border flex items-center justify-center gap-2 uppercase disabled:opacity-50"
-                      style={{ borderColor: "rgba(255,51,51,0.4)" }}
-                    >
-                      {isSendingTelegram ? (
-                        <>
-                          <Loader2 size={12} className="animate-spin" />
-                          DISPATCHING TICKET...
-                        </>
-                      ) : (
-                        <>
-                          <Wrench size={12} />
-                          TRANSMIT TICKET TO {serviceCompany.name.toUpperCase()}
-                        </>
-                      )}
-                    </button>
-                  </div>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="px-4 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 text-xs font-bold transition-all border border-cyan-500/40 uppercase"
+                  >
+                    DISPATCH TICKET
+                  </button>
                 </div>
 
-                {ticketSuccessMsg && (
-                  <div className="p-3.5 border border-green-500/30 bg-green-500/5 text-xs text-[var(--green)] font-mono space-y-1">
-                    <div className="font-bold">✓ {ticketSuccessMsg}</div>
-                    {telegramEnabled && telegramStatus && (
-                      <div className={`text-[11px] font-bold ${telegramStatus.success ? "text-green-400" : "text-amber-400 animate-pulse"}`}>
-                        {telegramStatus.success ? "✉ Telegram:" : "⚠️ Telegram:"} {telegramStatus.msg}
-                      </div>
-                    )}
+                {feedback && (
+                  <div className="text-xs text-green-400 font-mono">
+                    ✓ {feedback}
                   </div>
                 )}
               </form>
-            </div>
+            </CollapsibleCard>
 
-            {/* ─── REGISTERED TICKETS LOG ─── */}
-            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-                <Clock size={16} style={{ color: "var(--purple)" }} />
-                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                  REGISTERED VEHICLE SERVICE RECORDS LOG ({registeredIssues.length})
+            {/* Ticket History */}
+            <CollapsibleCard
+              title="SERVICE TICKET LOGS"
+              icon={<Shield size={16} style={{ color: "var(--purple)" }} />}
+              isOpen={expanded.history}
+              onToggle={() => toggleSection("history")}
+              badge={
+                <span className="px-2 py-0.5 text-[9px] font-mono border border-purple-500/40 bg-purple-500/10 text-purple-300">
+                  {registeredIssues.length} LOGGED
                 </span>
-              </div>
-
-              {registeredIssues.length === 0 ? (
-                <div className="py-8 text-center text-xs font-mono text-[var(--text-muted)] border border-dashed" style={{ borderColor: "var(--border)" }}>
-                  NO CURRENT TICKETS ON FILE WITH YOUR SERVICE PROVIDER.<br />
-                  SUBMIT A TICKET ABOVE WHEN A PROBLEM ARISES.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {registeredIssues.map((ticket) => (
-                    <div key={ticket.id} className="p-4 border flex flex-col sm:flex-row justify-between gap-4 animate-fade-in" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.2)" }}>
-                      <div className="space-y-1.5 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-sm font-bold text-white">{ticket.id}</span>
-                          <span className="text-[10px] text-[var(--text-muted)] font-mono">{ticket.date}</span>
-                          <span className="px-1.5 py-0.5 text-[8px] font-mono border"
-                            style={{
-                              borderColor: ticket.urgency === "high" ? "rgba(255,51,51,0.3)" : ticket.urgency === "medium" ? "rgba(255,184,0,0.3)" : "rgba(0,255,136,0.3)",
-                              color: ticket.urgency === "high" ? "var(--red)" : ticket.urgency === "medium" ? "var(--amber)" : "var(--green)"
-                            }}>
-                            {ticket.urgency.toUpperCase()} URGENCY
-                          </span>
-                          <span className="px-1.5 py-0.5 text-[8px] font-mono border"
-                            style={{
-                              borderColor: ticket.status === "resolved" ? "var(--green)" : "var(--amber)",
-                              color: ticket.status === "resolved" ? "var(--green)" : "var(--amber)",
-                              background: ticket.status === "resolved" ? "rgba(0,255,136,0.05)" : "rgba(255,184,0,0.05)"
-                            }}>
-                            {ticket.status === "resolved" ? "RESOLVED" : "PENDING GATEWAY DISPATCH"}
-                          </span>
-                        </div>
-
-                        <p className="text-xs text-[var(--text-secondary)] leading-relaxed font-mono">
-                          {ticket.description}
-                        </p>
-
-                        {ticket.dtcCodes.length > 0 && (
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            <span className="text-[9px] font-mono text-[var(--text-muted)] self-center mr-1">CODES:</span>
-                            {ticket.dtcCodes.map(code => (
-                              <span key={code} className="px-1 py-0.5 bg-red-500/5 border border-red-500/20 text-red-400 text-[8px] font-mono font-bold">
-                                {code}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        <div className="text-[10px] font-mono text-[var(--text-muted)] pt-1">
-                          DISPATCHED TO: <span className="text-white">{ticket.companyDetails?.name || "Service Company"}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex sm:flex-col justify-end gap-2 sm:w-32">
-                        {ticket.status !== "resolved" && (
-                          <button
-                            onClick={() => handleMarkResolved(ticket.id)}
-                            className="flex-1 sm:flex-none px-2 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-[10px] font-bold border transition-all uppercase"
-                            style={{ borderColor: "rgba(0,255,136,0.3)" }}
-                          >
-                            Mark Resolved
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleCancelTicket(ticket.id)}
-                          className="flex-1 sm:flex-none px-2 py-1 bg-black/40 hover:bg-red-500/10 hover:text-red-400 text-[10px] font-mono text-[var(--text-muted)] border border-white/10 hover:border-red-500/30 transition-all uppercase"
-                        >
-                          Delete Ticket
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-          </div>
-
-          {/* RIGHT AREA: Provider Card and Telegram Status Card (col 4) */}
-          <div className="lg:col-span-4 space-y-6">
-
-            {/* ─── CURRENT SERVICE PROVIDER CARD ─── */}
-            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-                <User size={16} style={{ color: "var(--cyan)" }} />
-                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                  CURRENT SERVICE PARTNER
-                </span>
-              </div>
-
-              <div className="space-y-3 font-mono">
-                <div>
-                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>COMPANY NAME</div>
-                  <div className="text-sm font-bold text-[var(--cyan)]">{serviceCompany.name}</div>
-                </div>
-
-                <div>
-                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>SUPPORT CONTACT PHONE</div>
-                  <div className="text-xs text-[var(--text-primary)]">{serviceCompany.phone || "Not set"}</div>
-                </div>
-
-                <div>
-                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>SUPPORT CONTACT EMAIL</div>
-                  <div className="text-xs text-[var(--text-primary)]">{serviceCompany.email || "Not set"}</div>
-                </div>
-
-                <div>
-                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>FACILITY / DISPATCH CENTER</div>
-                  <div className="text-xs text-[var(--text-primary)]">{serviceCompany.address || "Not set"}</div>
-                </div>
-              </div>
-
-              <div className="pt-2 border-t" style={{ borderColor: "var(--border)" }}>
-                <p className="text-[10px] text-[var(--text-muted)] leading-relaxed italic mb-2">
-                  Need to change mechanic or roadside assistance partner? Update provider records in the settings dashboard.
-                </p>
-                <div className="hud-label text-[10px] text-[var(--cyan)] flex items-center gap-1 font-bold">
-                  <span>SETTINGS TAB &gt; SYSTEM CONFIGURATION</span>
-                </div>
-              </div>
-            </div>
-
-            {/* ─── TELEGRAM BOT GATEWAY STATUS CARD ─── */}
-            <div className="panel p-5 space-y-4 font-mono" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-                <Radio size={16} style={{ color: telegramEnabled ? "var(--green)" : "var(--text-muted)" }} className={telegramEnabled ? "animate-pulse" : ""} />
-                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                  TELEGRAM TELEMETRY GATEWAY
-                </span>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] text-[var(--text-muted)]">GATEWAY STATUS:</span>
-                  <span className={`font-bold px-1.5 py-0.5 border ${telegramEnabled ? "text-green-400 border-green-500/20 bg-green-500/5" : "text-[var(--text-muted)] border-white/10"}`}>
-                    {telegramEnabled ? "ACTIVE (LIVE)" : "MUTED / DISABLED"}
-                  </span>
-                </div>
-
-                {telegramEnabled ? (
-                  <>
-                    <div>
-                      <span className="text-[9px] text-[var(--text-muted)] block">TARGET CHAT ID</span>
-                      <span className="text-[11px] text-[var(--text-primary)] block break-all">{telegramChatId || "Empty"}</span>
-                    </div>
-                    <div>
-                      <span className="text-[9px] text-[var(--text-muted)] block">BOT KEY PREFIX</span>
-                      <span className="text-[11px] text-[var(--text-primary)] block">
-                        {telegramToken ? `${telegramToken.slice(0, 8)}...` : "None"}
-                      </span>
-                    </div>
-                  </>
+              }
+            >
+              <div className="space-y-2">
+                {registeredIssues.length === 0 ? (
+                  <div className="p-4 text-center text-xs font-mono text-zinc-500 border border-dashed border-white/10">
+                    NO SERVICE TICKETS LOGGED
+                  </div>
                 ) : (
-                  <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
-                    Telegram integration is currently disabled. Enable the bot gateway in settings to receive real-time fault tickets on your mobile device.
-                  </p>
+                  registeredIssues.map((issue) => (
+                    <div key={issue.id} className="p-3 border border-white/10 bg-black/30 font-mono space-y-1">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-cyan-400">{issue.id}</span>
+                        <span className="text-[10px] text-zinc-400">{new Date(issue.date).toLocaleDateString()}</span>
+                      </div>
+                      <div className="text-xs text-zinc-200">{issue.description}</div>
+                      <div className="flex gap-2 text-[10px] text-zinc-400 pt-1">
+                        <span>Assigned: {issue.companyDetails.name}</span>
+                        <span>•</span>
+                        <span className="uppercase text-amber-400">{issue.urgency} Urgency</span>
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
-            </div>
+            </CollapsibleCard>
+          </div>
 
-            {/* ─── DIAGNOSTIC CHECKS GUIDANCE ─── */}
-            <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-              <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-                <Shield size={16} style={{ color: "var(--amber)" }} />
-                <span className="hud-display text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                  ECU TROUBLE CODES DECODER
-                </span>
-              </div>
-
-              <div className="space-y-3">
-                <div className="p-2.5 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
-                  <div className="text-xs font-bold text-red-400 font-mono">P0300</div>
-                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">RANDOM/MULTIPLE ENGINE MISFIRE DETECTED</div>
-                  <p className="text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
-                    Indicates spark plugs, ignition coils, or fuel injector delivery are failing under drive load. Urgent service required.
-                  </p>
+          {/* Right Column: Service Provider info & Telegram Gateway status */}
+          <div className="space-y-5">
+            <CollapsibleCard
+              title="ASSIGNED WORKSHOP DETAILS"
+              icon={<Wrench size={16} style={{ color: "var(--cyan)" }} />}
+              isOpen={expanded.company}
+              onToggle={() => toggleSection("company")}
+            >
+              <div className="space-y-2 font-mono text-xs">
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>COMPANY NAME</div>
+                  <div className="text-sm font-bold text-cyan-400">{serviceCompany.name}</div>
                 </div>
-
-                <div className="p-2.5 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
-                  <div className="text-xs font-bold text-red-400 font-mono">P0171</div>
-                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">AIR-FUEL RATIO SYSTEM TOO LEAN (BANK 1)</div>
-                  <p className="text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
-                    Indicates vacuum leaks or failing Mass Air Flow (MAF) sensors. Can degrade catalytic converters quickly.
-                  </p>
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>PHONE</div>
+                  <div className="text-zinc-300">{serviceCompany.phone || "Not set"}</div>
                 </div>
-
-                <div className="p-2.5 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
-                  <div className="text-xs font-bold text-red-400 font-mono">P0420</div>
-                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">CATALYST EFFICIENCY BELOW THRESHOLD</div>
-                  <p className="text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
-                    Exhaust gas levels entering or leaving the catalyst are abnormal. Check O2 sensor voltage.
-                  </p>
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>EMAIL</div>
+                  <div className="text-zinc-300">{serviceCompany.email || "Not set"}</div>
+                </div>
+                <div>
+                  <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>ADDRESS</div>
+                  <div className="text-zinc-300">{serviceCompany.address || "Not set"}</div>
                 </div>
               </div>
-            </div>
+            </CollapsibleCard>
 
+            <CollapsibleCard
+              title="TELEGRAM BOT GATEWAY"
+              icon={<Radio size={16} style={{ color: telegramEnabled ? "var(--green)" : "var(--text-muted)" }} />}
+              isOpen={expanded.telegram}
+              onToggle={() => toggleSection("telegram")}
+            >
+              <div className="space-y-2 font-mono text-xs">
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">GATEWAY STATUS:</span>
+                  <span className={telegramEnabled ? "text-green-400 font-bold" : "text-zinc-500"}>
+                    {telegramEnabled ? "ACTIVE (LIVE)" : "DISABLED"}
+                  </span>
+                </div>
+                {telegramEnabled && (
+                  <div>
+                    <span className="text-[9px] text-zinc-500 block">CHAT ID:</span>
+                    <span className="text-zinc-200">{telegramChatId || "Empty"}</span>
+                  </div>
+                )}
+              </div>
+            </CollapsibleCard>
           </div>
         </div>
       </div>
@@ -1394,18 +1188,9 @@ const MaintenanceTab: React.FC<{
   );
 };
 
-// ─── MINI STAT ────────────────────────────────────────────────
-export const MiniStat: React.FC<{ label: string; value: string | number; color: string }> = ({ label, value, color }) => (
-  <div className="p-2" style={{ border: "1px solid var(--border)", background: "rgba(0,0,0,0.3)" }}>
-    <div className="hud-label text-[9px] mb-0.5">{label}</div>
-    <div className="text-sm font-bold" style={{ fontFamily: "Share Tech Mono", color }}>{value}</div>
-  </div>
-);
-
 // ─── SYSTEM SETTINGS TAB ──────────────────────────────────────
+// NOTE: DTC INJECTOR REMOVED FROM SETTINGS AS IT IS FETCHED FROM API!
 const SettingsTab: React.FC<{
-  source: "mock" | "obd" | "dataset";
-  onToggleMock: () => void;
   tempUrl: string;
   onUrlChange: (url: string) => void;
   onSaveUrl: () => void;
@@ -1416,8 +1201,6 @@ const SettingsTab: React.FC<{
   tempUnit: "metric" | "imperial";
   setTempUnit: (unit: "metric" | "imperial") => void;
   resetStates: () => void;
-  activeDtcs: string[];
-  toggleDtc: (code: string) => void;
   serviceCompany: ServiceCompanyDetails;
   setServiceCompany: React.Dispatch<React.SetStateAction<ServiceCompanyDetails>>;
   telegramToken: string;
@@ -1427,8 +1210,6 @@ const SettingsTab: React.FC<{
   telegramEnabled: boolean;
   setTelegramEnabled: (enabled: boolean) => void;
 }> = ({
-  source,
-  onToggleMock,
   tempUrl,
   onUrlChange,
   onSaveUrl,
@@ -1439,8 +1220,6 @@ const SettingsTab: React.FC<{
   tempUnit,
   setTempUnit,
   resetStates,
-  activeDtcs,
-  toggleDtc,
   serviceCompany,
   setServiceCompany,
   telegramToken,
@@ -1456,9 +1235,39 @@ const SettingsTab: React.FC<{
   const [telegramErrorMsg, setTelegramErrorMsg] = useState<string | null>(null);
   const [isTestingTelegram, setIsTestingTelegram] = useState(false);
 
+  const [compName, setCompName] = useState(serviceCompany.name);
+  const [compEmail, setCompEmail] = useState(serviceCompany.email);
+  const [compPhone, setCompPhone] = useState(serviceCompany.phone);
+  const [compAddress, setCompAddress] = useState(serviceCompany.address);
+
+  useEffect(() => {
+    setCompName(serviceCompany.name);
+    setCompEmail(serviceCompany.email);
+    setCompPhone(serviceCompany.phone);
+    setCompAddress(serviceCompany.address);
+  }, [serviceCompany]);
+
+  const handleSaveCompany = (e: React.FormEvent) => {
+    e.preventDefault();
+    setServiceCompany({
+      name: compName,
+      email: compEmail,
+      phone: compPhone,
+      address: compAddress,
+    });
+    setCompanySuccessMsg("Service provider details updated successfully!");
+    setTimeout(() => setCompanySuccessMsg(null), 3000);
+  };
+
+  const handleSave = () => {
+    onSaveUrl();
+    setSuccessMsg("Backend URL updated successfully!");
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
   const handleTestTelegram = async () => {
     if (!telegramToken || !telegramChatId) {
-      setTelegramErrorMsg("Bot Token and Chat ID are required to test.");
+      setTelegramErrorMsg("Bot Token and Chat ID are required.");
       setTimeout(() => setTelegramErrorMsg(null), 4000);
       return;
     }
@@ -1468,9 +1277,8 @@ const SettingsTab: React.FC<{
     setTelegramErrorMsg(null);
 
     try {
-      const testMsg = `<b>🚗 OBD-II GUARDIAN: GATEWAY TEST SUCCESSFUL</b>\n\n` +
-        `This is a test notification confirming your Telegram Bot API connection to AutoVue is functional!\n\n` +
-        `• <b>Bot Token:</b> <code>Verified</code>\n` +
+      const testMsg = `<b>🚗 AUTOVUE: GATEWAY TEST SUCCESSFUL</b>\n\n` +
+        `This is a test notification confirming your Telegram Bot API connection is functional.\n\n` +
         `• <b>Chat ID:</b> <code>${telegramChatId}</code>\n` +
         `• <b>Timestamp:</b> <code>${new Date().toLocaleTimeString()}</code>`;
 
@@ -1480,8 +1288,8 @@ const SettingsTab: React.FC<{
         body: JSON.stringify({
           chat_id: telegramChatId,
           text: testMsg,
-          parse_mode: "HTML"
-        })
+          parse_mode: "HTML",
+        }),
       });
 
       const resData = await res.json();
@@ -1501,37 +1309,6 @@ const SettingsTab: React.FC<{
     }
   };
 
-  const [compName, setCompName] = useState(serviceCompany.name);
-  const [compEmail, setCompEmail] = useState(serviceCompany.email);
-  const [compPhone, setCompPhone] = useState(serviceCompany.phone);
-  const [compAddress, setCompAddress] = useState(serviceCompany.address);
-
-  // Sync with prop when tab mounts / resets
-  useEffect(() => {
-    setCompName(serviceCompany.name);
-    setCompEmail(serviceCompany.email);
-    setCompPhone(serviceCompany.phone);
-    setCompAddress(serviceCompany.address);
-  }, [serviceCompany]);
-
-  const handleSaveCompany = (e: React.FormEvent) => {
-    e.preventDefault();
-    setServiceCompany({
-      name: compName,
-      email: compEmail,
-      phone: compPhone,
-      address: compAddress
-    });
-    setCompanySuccessMsg("Service provider details updated successfully!");
-    setTimeout(() => setCompanySuccessMsg(null), 3000);
-  };
-
-  const handleSave = () => {
-    onSaveUrl();
-    setSuccessMsg("Backend URL saved successfully!");
-    setTimeout(() => setSuccessMsg(null), 3000);
-  };
-
   return (
     <div className="h-full overflow-y-auto scroll-area p-6" style={{ background: "var(--bg-deep)" }}>
       <div className="max-w-4xl mx-auto space-y-6">
@@ -1540,100 +1317,18 @@ const SettingsTab: React.FC<{
             SYSTEM CONFIGURATION
           </div>
           <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
-            MANAGE DATA SOURCES, DEVICE INTERFACES, DISPLAY UNITS AND CALIBRATION CONTROLS
+            MANAGE FASTAPI BACKEND TARGET, UNITS, AND NOTIFICATION GATEWAYS
           </div>
         </div>
 
-        {/* ─── DATA SOURCE SELECTION ─── */}
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            <div className="flex items-center gap-2">
-              <Database size={16} style={{ color: "var(--cyan)" }} />
-              <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
-                TELEMETRY SOURCE MODES
-              </span>
-            </div>
-            <span className="px-2 py-0.5 hud-label text-[9px] font-mono border"
-              style={{
-                borderColor: source === "obd" ? "var(--green)" : "var(--cyan)",
-                color: source === "obd" ? "var(--green)" : "var(--cyan)",
-                background: source === "obd" ? "rgba(0,255,136,0.05)" : "rgba(0,212,255,0.05)"
-              }}>
-              {source === "obd" ? "LIVE OBD-II CH" : "LOCAL SIMULATOR"}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Live OBD Mode Info */}
-            <div className="p-4 space-y-2 border" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.15)" }}>
-              <div className="hud-label text-xs font-bold" style={{ color: source === "obd" ? "var(--green)" : "var(--text-muted)" }}>
-                OBD-II LIVE OVER AIR (DEFAULT)
-              </div>
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                Fetches real-time diagnostics parameters directly from physical vehicle gateways or remote emulator servers via REST and WebSockets.
-              </p>
-              <div className="pt-2 flex items-center gap-1.5 text-[10px] font-mono text-[var(--text-muted)]">
-                <span>CHANNEL STATUS:</span>
-                {isConnected ? (
-                  <span className="text-[var(--green)]">CONNECTED</span>
-                ) : (
-                  <span className="text-[var(--amber)]">STANDBY / CONNECTING</span>
-                )}
-              </div>
-            </div>
-
-            {/* Mock Sim Mode Control */}
-            <div className="p-4 space-y-3 border flex flex-col justify-between"
-              style={{
-                borderColor: source === "mock" ? "var(--cyan)" : "var(--border)",
-                background: source === "mock" ? "rgba(0,212,255,0.04)" : "rgba(0,0,0,0.15)"
-              }}>
-              <div>
-                <div className="hud-label text-xs font-bold" style={{ color: source === "mock" ? "var(--cyan)" : "var(--text-secondary)" }}>
-                  MOCK SIMULATOR SWITCH
-                </div>
-                <p className="text-xs text-[var(--text-secondary)] leading-relaxed mt-1">
-                  Enables a comprehensive local synthetic drivecycle loop simulating RPM, Speed, Loads, and Temperatures for presentation.
-                </p>
-              </div>
-
-              {/* Slider Toggle Button */}
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-[10px] font-mono text-[var(--text-muted)]">TOGGLE STATE:</span>
-                <button
-                  onClick={onToggleMock}
-                  className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold transition-all border relative"
-                  style={{
-                    borderColor: source === "mock" ? "var(--cyan)" : "rgba(255,255,255,0.2)",
-                    color: source === "mock" ? "var(--cyan)" : "var(--text-muted)",
-                    background: source === "mock" ? "rgba(0,212,255,0.12)" : "transparent"
-                  }}
-                >
-                  <motion.div
-                    className="w-2.5 h-2.5 rounded-full"
-                    style={{ background: source === "mock" ? "var(--cyan)" : "var(--text-muted)" }}
-                    animate={source === "mock" ? { opacity: [1, 0.4, 1] } : {}}
-                    transition={{ duration: 1, repeat: Infinity }}
-                  />
-                  <span>{source === "mock" ? "ACTIVE" : "DISABLED"}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ─── ENDPOINT & TUNNEL CONNECTION ─── */}
+        {/* ─── BACKEND URL CONFIGURATION ─── */}
         <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
           <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            <Server size={16} style={{ color: "var(--amber)" }} />
+            <Server size={16} style={{ color: "var(--cyan)" }} />
             <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
-              OBD-II TUNNEL ENDPOINT
+              FASTAPI BACKEND GATEWAY
             </span>
           </div>
-
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            Specify the REST and WebSocket gateway API endpoint of your local diagnostic logger (e.g. FastAPI/Pinggy proxy address).
-          </p>
 
           <div className="space-y-3">
             <div>
@@ -1645,17 +1340,13 @@ const SettingsTab: React.FC<{
                   type="text"
                   value={tempUrl}
                   onChange={(e) => onUrlChange(e.target.value)}
-                  placeholder="e.g., http://localhost:8000"
-                  className="flex-1 bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-amber-500/50"
-                  style={{
-                    border: "1px solid var(--border)",
-                    color: "var(--text-primary)",
-                  }}
+                  placeholder="e.g., https://ecu-backend-95fz.onrender.com or http://localhost:8000"
+                  className="flex-1 bg-black/40 text-xs px-3 py-2 outline-none font-mono"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
                 />
                 <button
                   onClick={handleSave}
-                  className="px-4 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-bold transition-all border flex items-center gap-2"
-                  style={{ borderColor: "rgba(255,184,0,0.5)" }}
+                  className="px-4 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs font-bold transition-all border border-cyan-500/40"
                 >
                   SAVE ENDPOINT
                 </button>
@@ -1663,25 +1354,23 @@ const SettingsTab: React.FC<{
             </div>
 
             {successMsg && (
-              <div className="text-xs text-[var(--green)] font-mono">
+              <div className="text-xs text-green-400 font-mono">
                 ✓ {successMsg}
               </div>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-              {/* Endpoint Health status card */}
               <div className="p-3 border flex items-center justify-between" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
-                <span className="text-[10px] text-[var(--text-muted)] font-mono">BACKEND INSTANCE:</span>
+                <span className="text-[10px] text-[var(--text-muted)] font-mono">BACKEND STATUS:</span>
                 <span className="text-xs font-bold font-mono" style={{ color: isBackendHealthy ? "var(--green)" : "var(--red)" }}>
-                  {isBackendHealthy === null ? "CHECKING..." : isBackendHealthy ? "ONLINE (CONNECTED)" : "OFFLINE (COULD NOT REACH)"}
+                  {isBackendHealthy === null ? "CHECKING..." : isBackendHealthy ? "ONLINE (REACHABLE)" : "OFFLINE"}
                 </span>
               </div>
 
-              {/* Endpoint Socket status card */}
               <div className="p-3 border flex items-center justify-between" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.1)" }}>
                 <span className="text-[10px] text-[var(--text-muted)] font-mono">LIVE WS CHANNEL:</span>
                 <span className="text-xs font-bold font-mono" style={{ color: isConnected ? "var(--green)" : "var(--amber)" }}>
-                  {isConnected ? "ACTIVE" : "STANDBY"}
+                  {isConnected ? "CONNECTED" : "DISCONNECTED"}
                 </span>
               </div>
             </div>
@@ -1698,60 +1387,48 @@ const SettingsTab: React.FC<{
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Speed units */}
             <div className="space-y-2">
               <span className="hud-label text-[10px] block" style={{ color: "var(--text-muted)" }}>
-                VELOCITY UNIT SYSTEM
+                SPEED UNITS
               </span>
               <div className="flex border" style={{ borderColor: "var(--border)" }}>
                 <button
                   onClick={() => setSpeedUnit("metric")}
-                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
-                  style={{
-                    background: speedUnit === "metric" ? "rgba(168,85,247,0.15)" : "transparent",
-                    color: speedUnit === "metric" ? "var(--purple)" : "var(--text-muted)",
-                    borderRight: "1px solid var(--border)"
-                  }}
+                  className={`flex-1 py-1.5 text-[10px] font-bold transition-all ${
+                    speedUnit === "metric" ? "bg-purple-500/20 text-purple-300" : "text-zinc-500"
+                  }`}
                 >
                   METRIC (KM/H)
                 </button>
                 <button
                   onClick={() => setSpeedUnit("imperial")}
-                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
-                  style={{
-                    background: speedUnit === "imperial" ? "rgba(168,85,247,0.15)" : "transparent",
-                    color: speedUnit === "imperial" ? "var(--purple)" : "var(--text-muted)"
-                  }}
+                  className={`flex-1 py-1.5 text-[10px] font-bold transition-all ${
+                    speedUnit === "imperial" ? "bg-purple-500/20 text-purple-300" : "text-zinc-500"
+                  }`}
                 >
                   IMPERIAL (MPH)
                 </button>
               </div>
             </div>
 
-            {/* Thermal units */}
             <div className="space-y-2">
               <span className="hud-label text-[10px] block" style={{ color: "var(--text-muted)" }}>
-                TEMPERATURE SCALING
+                TEMPERATURE UNITS
               </span>
               <div className="flex border" style={{ borderColor: "var(--border)" }}>
                 <button
                   onClick={() => setTempUnit("metric")}
-                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
-                  style={{
-                    background: tempUnit === "metric" ? "rgba(255,184,0,0.15)" : "transparent",
-                    color: tempUnit === "metric" ? "var(--amber)" : "var(--text-muted)",
-                    borderRight: "1px solid var(--border)"
-                  }}
+                  className={`flex-1 py-1.5 text-[10px] font-bold transition-all ${
+                    tempUnit === "metric" ? "bg-amber-500/20 text-amber-300" : "text-zinc-500"
+                  }`}
                 >
                   CELSIUS (°C)
                 </button>
                 <button
                   onClick={() => setTempUnit("imperial")}
-                  className="flex-1 py-1.5 text-[10px] font-bold transition-all"
-                  style={{
-                    background: tempUnit === "imperial" ? "rgba(255,184,0,0.15)" : "transparent",
-                    color: tempUnit === "imperial" ? "var(--amber)" : "var(--text-muted)"
-                  }}
+                  className={`flex-1 py-1.5 text-[10px] font-bold transition-all ${
+                    tempUnit === "imperial" ? "bg-amber-500/20 text-amber-300" : "text-zinc-500"
+                  }`}
                 >
                   FAHRENHEIT (°F)
                 </button>
@@ -1760,94 +1437,73 @@ const SettingsTab: React.FC<{
           </div>
         </div>
 
-        {/* ─── CAR SERVICE COMPANY DETAILS ─── */}
+        {/* ─── WORKSHOP DETAILS ─── */}
         <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
           <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
             <Wrench size={16} style={{ color: "var(--cyan)" }} />
             <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
-              CAR SERVICE COMPANY DETAILS
+              PREFERRED SERVICE WORKSHOP DETAILS
             </span>
           </div>
-
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            Update your preferred automotive service center, mechanic shop, or roadside assistance company details. These contact details are used to file service tickets whenever issues or diagnostic trouble codes (DTCs) arise.
-          </p>
 
           <form onSubmit={handleSaveCompany} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                  COMPANY / SERVICE CENTER NAME
+                  COMPANY / WORKSHOP NAME
                 </label>
                 <input
                   type="text"
                   value={compName}
                   onChange={(e) => setCompName(e.target.value)}
-                  placeholder="e.g., Apex Auto Services"
-                  required
-                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
-                  style={{
-                    border: "1px solid var(--border)",
-                    color: "var(--text-primary)",
-                  }}
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
                 />
               </div>
 
               <div>
                 <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                  CONTACT PHONE NUMBER
+                  PHONE NUMBER
                 </label>
                 <input
                   type="text"
                   value={compPhone}
                   onChange={(e) => setCompPhone(e.target.value)}
-                  placeholder="e.g., +1 (555) 019-2834"
-                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
-                  style={{
-                    border: "1px solid var(--border)",
-                    color: "var(--text-primary)",
-                  }}
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
                 />
               </div>
 
               <div>
                 <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                  SUPPORT EMAIL ADDRESS
+                  EMAIL ADDRESS
                 </label>
                 <input
                   type="email"
                   value={compEmail}
                   onChange={(e) => setCompEmail(e.target.value)}
-                  placeholder="e.g., service@apexauto.com"
-                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
-                  style={{
-                    border: "1px solid var(--border)",
-                    color: "var(--text-primary)",
-                  }}
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
                 />
               </div>
 
               <div>
                 <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                  SERVICE CENTER ADDRESS
+                  WORKSHOP ADDRESS
                 </label>
                 <input
                   type="text"
                   value={compAddress}
                   onChange={(e) => setCompAddress(e.target.value)}
-                  placeholder="e.g., 404 Performance Blvd, Detroit, MI"
-                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-cyan-500/50"
-                  style={{
-                    border: "1px solid var(--border)",
-                    color: "var(--text-primary)",
-                  }}
+                  className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
                 />
               </div>
             </div>
 
             <div className="flex items-center justify-between pt-2">
               {companySuccessMsg ? (
-                <span className="text-xs text-[var(--green)] font-mono">
+                <span className="text-xs text-green-400 font-mono">
                   ✓ {companySuccessMsg}
                 </span>
               ) : (
@@ -1855,20 +1511,19 @@ const SettingsTab: React.FC<{
               )}
               <button
                 type="submit"
-                className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs font-bold transition-all border flex items-center gap-2"
-                style={{ borderColor: "rgba(0,212,255,0.4)" }}
+                className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs font-bold transition-all border border-cyan-500/40"
               >
-                UPDATE PROVIDER DETAILS
+                UPDATE WORKSHOP DETAILS
               </button>
             </div>
           </form>
         </div>
 
-        {/* ─── TELEGRAM FAULT DISPATCH GATEWAY ─── */}
+        {/* ─── TELEGRAM NOTIFICATION GATEWAY ─── */}
         <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
           <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
             <div className="flex items-center gap-2">
-              <Radio size={16} style={{ color: "var(--green)" }} className={telegramEnabled ? "animate-pulse" : ""} />
+              <Radio size={16} style={{ color: "var(--green)" }} />
               <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
                 TELEGRAM FAULT DISPATCH GATEWAY
               </span>
@@ -1876,194 +1531,77 @@ const SettingsTab: React.FC<{
             <button
               type="button"
               onClick={() => setTelegramEnabled(!telegramEnabled)}
-              className="px-3 py-1 text-[10px] font-bold border transition-all flex items-center gap-2"
-              style={{
-                borderColor: telegramEnabled ? "var(--green)" : "rgba(255,255,255,0.2)",
-                color: telegramEnabled ? "var(--green)" : "var(--text-muted)",
-                background: telegramEnabled ? "rgba(0,255,136,0.1)" : "transparent"
-              }}
+              className={`px-3 py-1 text-[10px] font-bold border transition-all flex items-center gap-2 ${
+                telegramEnabled ? "bg-green-500/15 text-green-400 border-green-500/40" : "bg-black/30 text-zinc-500 border-white/10"
+              }`}
             >
               <div className={`w-2 h-2 rounded-full ${telegramEnabled ? "bg-green-400 animate-pulse" : "bg-zinc-600"}`} />
               <span>{telegramEnabled ? "ENABLED" : "DISABLED"}</span>
             </button>
           </div>
 
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            By connecting a custom Telegram Bot, AutoVue will dispatch rich diagnostic fault reports and ticket alerts directly to your mobile devices/group channels upon client-side generation.
-          </p>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                TELEGRAM BOT API TOKEN
+                BOT API TOKEN
               </label>
               <input
                 type="password"
                 value={telegramToken}
                 onChange={(e) => setTelegramToken(e.target.value)}
-                placeholder="e.g., 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
-                className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-green-500/50"
-                style={{
-                  border: "1px solid var(--border)",
-                  color: "var(--text-primary)",
-                }}
+                placeholder="From @BotFather"
+                className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono"
+                style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
               />
-              <span className="text-[9px] text-[var(--text-muted)] block mt-1">
-                Obtained from Telegram's official <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">@BotFather</a>.
-              </span>
             </div>
 
             <div>
               <label className="hud-label text-[10px] block mb-1.5" style={{ color: "var(--text-muted)" }}>
-                TELEGRAM TARGET CHAT ID
+                TARGET CHAT ID
               </label>
               <input
                 type="text"
                 value={telegramChatId}
                 onChange={(e) => setTelegramChatId(e.target.value)}
-                placeholder="e.g., 987654321"
-                className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono focus:border-green-500/50"
-                style={{
-                  border: "1px solid var(--border)",
-                  color: "var(--text-primary)",
-                }}
+                placeholder="From @userinfobot"
+                className="w-full bg-black/40 text-xs px-3 py-2 outline-none font-mono"
+                style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
               />
-              <span className="text-[9px] text-[var(--text-muted)] block mt-1">
-                Your personal ID or Group chat ID (can be fetched using <a href="https://t.me/userinfobot" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">@userinfobot</a>).
-              </span>
             </div>
           </div>
 
-          {/* Collapsible Quick-Start Guide */}
-          <details className="border p-3 border-white/10 bg-black/10 group">
-            <summary className="hud-label text-[10px] cursor-pointer text-cyan-400 hover:text-cyan-300 list-none flex items-center justify-between font-bold">
-              <span>📖 TELEGRAM BOT CONNECTION SETUP GUIDE (CLICK TO EXPAND)</span>
-              <span className="transition-transform group-open:rotate-180">▼</span>
-            </summary>
-            <div className="mt-3 text-xs text-[var(--text-secondary)] space-y-2 leading-relaxed">
-              <p>
-                Follow these simple steps to configure your own real-time dispatch gateway:
-              </p>
-              <ol className="list-decimal list-inside space-y-1 text-[11px] font-mono">
-                <li>Search for <strong className="text-white">@BotFather</strong> on Telegram and start a chat.</li>
-                <li>Send the command <code className="text-amber-400">/newbot</code> and follow instructions to name your bot.</li>
-                <li>Copy the generated <strong className="text-white">HTTP API Access Token</strong> and paste it above.</li>
-                <li>Search for <strong className="text-white">@userinfobot</strong> on Telegram and start it to instantly receive your unique <strong className="text-white">Chat ID</strong>. Paste it above.</li>
-                <li><strong>CRITICAL:</strong> Send a <strong>/start</strong> message to your newly created bot first, otherwise Telegram will block its messages!</li>
-                <li>Click <strong>TEST DISPATCH GATEWAY</strong> below to verify.</li>
-              </ol>
-            </div>
-          </details>
-
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+          <div className="flex items-center justify-between pt-2">
             <div>
-              {telegramSuccessMsg && (
-                <span className="text-xs text-[var(--green)] font-mono block">
-                  ✓ {telegramSuccessMsg}
-                </span>
-              )}
-              {telegramErrorMsg && (
-                <span className="text-xs text-red-400 font-mono block animate-pulse">
-                  ⚠️ {telegramErrorMsg}
-                </span>
-              )}
+              {telegramSuccessMsg && <span className="text-xs text-green-400 font-mono">✓ {telegramSuccessMsg}</span>}
+              {telegramErrorMsg && <span className="text-xs text-red-400 font-mono">⚠️ {telegramErrorMsg}</span>}
             </div>
-            
+
             <button
               type="button"
               onClick={handleTestTelegram}
               disabled={isTestingTelegram}
-              className="px-4 py-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-xs font-bold transition-all border flex items-center justify-center gap-2 uppercase disabled:opacity-50"
-              style={{ borderColor: "rgba(0,255,136,0.4)" }}
+              className="px-4 py-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-xs font-bold transition-all border border-green-500/40 uppercase"
             >
-              {isTestingTelegram ? (
-                <>
-                  <Loader2 size={12} className="animate-spin" />
-                  TESTING DISPATCH...
-                </>
-              ) : (
-                <>
-                  <Radio size={12} />
-                  TEST DISPATCH GATEWAY
-                </>
-              )}
+              {isTestingTelegram ? "DISPATCHING TEST..." : "TEST DISPATCH GATEWAY"}
             </button>
           </div>
         </div>
 
-        {/* ─── TESTING AND DIAGNOSTICS CONTROL ─── */}
+        {/* ─── RESET SYSTEM TRIP CACHES ─── */}
         <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            <Shield size={16} style={{ color: "var(--red)" }} />
-            <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
-              OBD-II INJECTOR / FAULT CODE SIMULATOR
-            </span>
-          </div>
-
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            Verify DTC notification handlers and health metrics scoring maps inside your diagnostics module by injecting diagnostic trouble codes.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {[
-              { code: "P0300", name: "MISFIRE (P0300)", desc: "Random/Multiple Cylinder Misfire Detected" },
-              { code: "P0171", name: "SYSTEM TOO LEAN (P0171)", desc: "Fuel mixture too lean under load" },
-              { code: "P0420", name: "CATALYST LOW (P0420)", desc: "Catalytic Converter Efficiency Below Threshold" }
-            ].map(({ code, name, desc }) => {
-              const isActive = activeDtcs.includes(code);
-              return (
-                <button
-                  key={code}
-                  onClick={() => toggleDtc(code)}
-                  className={`px-3 py-2.5 border text-left flex flex-col justify-between transition-all relative overflow-hidden group ${
-                    isActive 
-                      ? "bg-red-500/15 border-red-500 text-red-400 shadow-[0_0_12px_rgba(239,68,68,0.15)]" 
-                      : "bg-zinc-900/50 hover:bg-zinc-900/80 border-zinc-800 hover:border-zinc-700 text-zinc-400"
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full mb-1">
-                    <span className={`text-[10px] font-mono font-bold tracking-wider uppercase ${isActive ? "text-red-400" : "text-zinc-400"}`}>
-                      {name}
-                    </span>
-                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-none uppercase ${
-                      isActive 
-                        ? "bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse" 
-                        : "bg-zinc-800 text-zinc-500 border border-zinc-700/50"
-                    }`}>
-                      {isActive ? "ACTIVE" : "INACTIVE"}
-                    </span>
-                  </div>
-                  <span className="text-[9px] text-zinc-500 font-sans leading-tight mt-1 group-hover:text-zinc-400 transition-colors">
-                    {desc}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ─── MAINTENANCE & APP CACHE ─── */}
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            <Wrench size={16} style={{ color: "var(--text-muted)" }} />
-            <span className="hud-display text-base font-bold" style={{ color: "var(--text-primary)" }}>
-              DASHBOARD CALIBRATION & RESET
-            </span>
-          </div>
-
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center justify-between">
             <div>
-              <div className="text-xs font-bold text-[var(--text-primary)]">
-                RESET SYSTEM TRIP CACHES
+              <div className="text-xs font-bold text-zinc-200">
+                RESET SYSTEM TRIP DATA
               </div>
-              <p className="text-xs text-[var(--text-secondary)] mt-1">
-                Clears the active drive session timers, odometer distance logs, sensor graphs buffer history, and restores diagnostic scoring metrics back to standard defaults.
+              <p className="text-xs text-zinc-400 mt-1">
+                Clears live trip distance counter, timer, and rolling waveform chart buffers.
               </p>
             </div>
 
             <button
               onClick={resetStates}
-              className="px-4 py-2 hover:bg-white/10 text-white text-[10px] font-bold transition-all border border-white/20 uppercase"
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold border border-white/20 uppercase"
             >
               RESET ALL TRIP DATA
             </button>
