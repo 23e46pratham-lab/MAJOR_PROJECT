@@ -23,6 +23,10 @@ interface PathPoint {
 interface GPSMapProps {
   telemetry: TelemetryData;
   speedUnit?: "metric" | "imperial";
+  compact?: boolean;
+  onViewAll?: () => void;
+  showTraveledPath?: boolean;
+  initialMapStyle?: "dark" | "osm" | "satellite";
 }
 
 // Helpers for segment coloring
@@ -47,16 +51,29 @@ function getFuelColor(mileage: number): string {
   return "#00d4ff"; // idle / 0
 }
 
-export const GPSMap: React.FC<GPSMapProps> = ({ telemetry, speedUnit = "metric" }) => {
+export const GPSMap: React.FC<GPSMapProps> = ({
+  telemetry,
+  speedUnit = "metric",
+  compact = false,
+  onViewAll,
+  showTraveledPath,
+  initialMapStyle,
+}) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const accuracyCircleRef = useRef<L.CircleMarker | null>(null);
   const polylineGroupRef = useRef<L.LayerGroup | null>(null);
 
+  // In fleet overview map, do NOT draw the line (point only); draw path line only in individual driver view
+  const shouldDrawPath = showTraveledPath !== undefined ? showTraveledPath : !compact;
+
   const [displayMode, setDisplayMode] = useState<MapDisplayMode>("standard");
   const [followVehicle, setFollowVehicle] = useState(true);
-  const [mapStyle, setMapStyle] = useState<"dark" | "osm" | "satellite">("dark");
+  // Default to "satellite" ("SAT") in compact fleet overview mode, or as explicitly set
+  const [mapStyle, setMapStyle] = useState<"dark" | "osm" | "satellite">(
+    initialMapStyle || (compact ? "satellite" : "dark")
+  );
   const [traveledPath, setTraveledPath] = useState<PathPoint[]>([]);
 
   const isImperial = speedUnit === "imperial";
@@ -158,11 +175,15 @@ export const GPSMap: React.FC<GPSMapProps> = ({ telemetry, speedUnit = "metric" 
   }, [mapStyle]);
 
   // Render Traveled Path Segments with Heatmap coloring
+  // NOTE: On the fleet overview map, do NOT draw the line (point only); draw path line only in individual driver view
   useEffect(() => {
     const group = polylineGroupRef.current;
     if (!group) return;
 
     group.clearLayers();
+
+    // If shouldDrawPath is false (e.g. Fleet Overview map), keep layers cleared (point only)
+    if (!shouldDrawPath) return;
 
     if (traveledPath.length < 2) return;
 
@@ -200,7 +221,7 @@ export const GPSMap: React.FC<GPSMapProps> = ({ telemetry, speedUnit = "metric" 
         }).addTo(group);
       }
     }
-  }, [traveledPath, displayMode]);
+  }, [traveledPath, displayMode, shouldDrawPath]);
 
   // Update Live Vehicle Marker and Follow
   useEffect(() => {
@@ -271,7 +292,52 @@ export const GPSMap: React.FC<GPSMapProps> = ({ telemetry, speedUnit = "metric" 
 
   return (
     <div className="h-full flex flex-col overflow-hidden relative" style={{ background: "var(--bg-deep)" }}>
-      {/* ── Top Bar: Switchable Heatmap Display Modes ── */}
+      {/* ── Top Bar: Switchable Heatmap Display Modes OR Compact Fleet Overview Header ── */}
+      {compact ? (
+        <div
+          className="px-5 py-3.5 border-b flex items-center justify-between shrink-0"
+          style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+              <MapPin size={15} />
+            </div>
+            <span className="font-semibold text-sm text-white tracking-wide">Fleet Overview</span>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/35 uppercase tracking-wider">
+              SAT VIEW
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Map Style Selector for Fleet Overview */}
+            <div className="flex border border-[#1A263D] rounded-lg overflow-hidden text-[10px] bg-[#090D17]">
+              {(["satellite", "dark"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setMapStyle(s)}
+                  className={`px-2.5 py-1 font-bold uppercase transition-all cursor-pointer ${
+                    mapStyle === s
+                      ? "bg-cyan-500/25 text-cyan-300"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {s === "satellite" ? "SAT" : "DARK"}
+                </button>
+              ))}
+            </div>
+
+            {onViewAll && (
+              <button
+                onClick={onViewAll}
+                className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ml-2"
+              >
+                <span>View All</span>
+                <span>→</span>
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
       <div
         className="px-5 py-3 border-b flex flex-wrap items-center justify-between gap-4 z-10 shrink-0"
         style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}
@@ -393,12 +459,43 @@ export const GPSMap: React.FC<GPSMapProps> = ({ telemetry, speedUnit = "metric" 
           </button>
         </div>
       </div>
+      )}
 
       {/* ── Main Map Canvas Area ── */}
       <div className="flex-1 relative overflow-hidden">
         <div ref={mapContainerRef} className="w-full h-full z-0" />
 
+        {/* ── Compact Map Legend & Location ── */}
+        {compact && (
+          <>
+            <div className="absolute top-3.5 left-3.5 z-[400] bg-[#0F1626]/90 backdrop-blur-md border border-[#1A263D] rounded-xl px-3 py-2 flex items-center gap-3.5 shadow-xl">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]"></span>
+                <span>Online</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
+                <span className="w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.7)]"></span>
+                <span>Idle</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
+                <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.7)]"></span>
+                <span>Alert</span>
+              </div>
+            </div>
+
+            <div className="absolute bottom-3.5 left-3.5 z-[400] bg-[#0F1626]/90 backdrop-blur-md border border-[#1A263D] rounded-xl px-3 py-1.5 flex items-center gap-2 text-xs font-medium text-slate-200 shadow-xl">
+              <MapPin size={13} className="text-cyan-400" />
+              <span>Mangaluru, KA</span>
+              <span className="text-[10px] text-cyan-300 font-mono bg-cyan-500/20 px-1.5 py-0.5 rounded border border-cyan-500/30">
+                POINT ONLY
+              </span>
+            </div>
+          </>
+        )}
+
         {/* ── Floating Overlay HUD: Live Position & Telemetry ── */}
+        {!compact && (
+        <>
         <div className="absolute top-4 left-4 z-[400] flex flex-col gap-2 pointer-events-none">
           <div
             className="panel p-3 pointer-events-auto shadow-2xl backdrop-blur-md"
@@ -549,6 +646,8 @@ export const GPSMap: React.FC<GPSMapProps> = ({ telemetry, speedUnit = "metric" 
             )}
           </div>
         </div>
+        </>
+        )}
 
         {/* Notice when waiting for live GPS coordinates */}
         {!hasLiveCoordinates && traveledPath.length === 0 && (

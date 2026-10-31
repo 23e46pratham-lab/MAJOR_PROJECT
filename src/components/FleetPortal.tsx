@@ -3,24 +3,52 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Truck, Car, Activity, Shield, Navigation2, Wrench, Settings,
-  Radio, Gauge, Cpu, Eye, ExternalLink, AlertTriangle, CheckCircle,
-  AlertCircle, Server, User, Clock, ArrowRight, Zap, Fuel, Flame,
-  TrendingUp, RefreshCw, Sun, Moon, Volume2, ShieldAlert, ChevronRight,
-  Database, MapPin, HardDrive, Compass
+  LayoutDashboard, Car, Activity, BarChart2, FileText, Bell, Settings,
+  MapPin, Plus, Sun, Moon, ChevronRight, ChevronDown, Check, X,
+  AlertTriangle, AlertCircle, CheckCircle, Flame, Zap, Fuel, Leaf,
+  Eye, RefreshCw, Send, Shield, User, Clock, ArrowRight, ExternalLink,
+  Cpu, Wrench, Search, Filter, Sliders, Radio, Compass, Server
 } from "lucide-react";
+import {
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid
+} from "recharts";
 import { useLiveTelemetry, LiveTelemetryState } from "../services/useLiveTelemetry";
 import { Dashboard } from "./Dashboard";
 import { GPSMap } from "./GPSMap";
-import { LiveChart, MultiLineChart } from "./LiveChart";
+import { MultiLineChart } from "./LiveChart";
 
-type FleetTab = "overview" | "vehicles" | "driver" | "map" | "maintenance" | "settings";
+export type FleetTab =
+  | "dashboard"
+  | "devices"
+  | "monitoring"
+  | "analytics"
+  | "reports"
+  | "alerts"
+  | "settings";
 
-// Vehicle info constant (1 single monitored vehicle as requested)
-export const MONITORED_VEHICLE = {
+export interface MonitoredVehicle {
+  id: string;
+  name: string;
+  year: number;
+  type: string;
+  plate: string;
+  vin: string;
+  driverName: string;
+  driverId: string;
+  engineSpec: string;
+  fuelType: string;
+  protocol: string;
+  ecuFirmware: string;
+  department: string;
+  hubLocation: string;
+  status: "Online" | "Idle" | "Alert";
+}
+
+// Live primary monitored vehicle connected to OBD-II ECU
+export const INITIAL_VEHICLE: MonitoredVehicle = {
   id: "FLEET-UNIT-01",
   name: "Seat León 1.6 FSI",
   year: 2017,
@@ -29,14 +57,13 @@ export const MONITORED_VEHICLE = {
   vin: "VSSZZZ5PZ8R019482",
   driverName: "Pratham S.",
   driverId: "DRV-8821",
-  driverLicense: "DL-KA19-2022-004921",
   engineSpec: "1.6L Inline-4 16V FSI (1,598 cc)",
   fuelType: "BS6 E10 Gasoline (AFR 14.7)",
   protocol: "OBD-II ISO 15765-4 CAN (11-bit ID, 500 kbaud)",
   ecuFirmware: "v2.1.0-OBD-CANBUS",
-  gatewayTarget: "FastAPI / Pinggy Reverse Proxy (Port 3000)",
   department: "Urban Logistics & Telematics Operations",
-  hubLocation: "St Joseph Engineering College / Mangalore Node",
+  hubLocation: "St Joseph Engineering College / Mangaluru Node",
+  status: "Online",
 };
 
 export const FleetPortal: React.FC = () => {
@@ -72,10 +99,25 @@ export const FleetPortal: React.FC = () => {
     fuelML,
   } = telemetryState;
 
-  const [activeTab, setActiveTab] = useState<FleetTab>("overview");
+  const [activeTab, setActiveTab] = useState<FleetTab>("dashboard");
   const [selectedVehicle, setSelectedVehicle] = useState<boolean>(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [systemTime, setSystemTime] = useState(new Date().toLocaleTimeString());
+  const [isAddDeviceOpen, setIsAddDeviceOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Fleet Device Registry (starts with primary monitored vehicle)
+  const [vehicles, setVehicles] = useState<MonitoredVehicle[]>([INITIAL_VEHICLE]);
+
+  // Form state for adding device
+  const [newDevice, setNewDevice] = useState({
+    name: "Volkswagen Golf 1.4 TSI",
+    plate: "KA 20 PX 6721",
+    vin: "WVWZZZ1KZ9W049182",
+    protocol: "OBD-II ISO 15765-4 CAN (11-bit, 500 kbaud)",
+    driverName: "Kavya R.",
+    department: "Logistics Hub - Mangaluru South",
+  });
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -86,22 +128,55 @@ export const FleetPortal: React.FC = () => {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    if (theme === "light") {
+      document.documentElement.classList.add("light");
+      document.documentElement.classList.remove("dark");
+    } else {
+      document.documentElement.classList.add("dark");
+      document.documentElement.classList.remove("light");
+    }
   }, [theme]);
 
-  // Derived units
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleRegisterDevice = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDevice.plate.trim() || !newDevice.name.trim()) return;
+
+    const registered: MonitoredVehicle = {
+      id: `FLEET-UNIT-0${vehicles.length + 1}`,
+      name: newDevice.name.trim(),
+      year: 2021,
+      type: "Commercial Compact Fleet",
+      plate: newDevice.plate.trim(),
+      vin: newDevice.vin.trim() || "VSSZZZ5PZ8R999999",
+      driverName: newDevice.driverName.trim() || "Unassigned Operator",
+      driverId: `DRV-${Math.floor(1000 + Math.random() * 9000)}`,
+      engineSpec: "1.4L TSI Turbo (1,390 cc)",
+      fuelType: "Gasoline E10",
+      protocol: newDevice.protocol,
+      ecuFirmware: "v2.1.0-OBD-CANBUS",
+      department: newDevice.department.trim() || "Urban Logistics Hub",
+      hubLocation: "Mangaluru Telematics Node",
+      status: "Online",
+    };
+
+    setVehicles((prev) => [...prev, registered]);
+    setIsAddDeviceOpen(false);
+    showToast(`Device ${registered.plate} successfully paired to fleet gateway!`);
+  };
+
+  // Unit conversions
   const isImperialSpeed = speedUnit === "imperial";
   const isImperialTemp = tempUnit === "imperial";
   const displayVss = isImperialSpeed ? Math.round(telemetry.vss * 0.621371) : telemetry.vss;
   const speedUnitStr = isImperialSpeed ? "mph" : "km/h";
   const displayCoolant = isImperialTemp ? Math.round(telemetry.coolantTemp * 1.8 + 32) : telemetry.coolantTemp;
   const tempUnitStr = isImperialTemp ? "°F" : "°C";
-
-  const bColor =
-    currentBehavior === "Economical"
-      ? "var(--green)"
-      : currentBehavior === "Moderate"
-      ? "var(--amber)"
-      : "var(--red)";
+  const mileageVal = fuelML?.mileage_kmpl ?? 15.8;
 
   const formatDuration = (s: number) => {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -110,629 +185,1544 @@ export const FleetPortal: React.FC = () => {
       : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   };
 
-  // If the fleet manager opens the vehicle, render the full Dashboard cockpit view
+  // If the fleet manager opens the vehicle, render full vehicle telemetry cockpit
   if (selectedVehicle) {
     return (
       <Dashboard
         onBackToFleet={() => setSelectedVehicle(false)}
         sharedState={telemetryState}
         vehicleInfo={{
-          id: MONITORED_VEHICLE.id,
-          model: MONITORED_VEHICLE.name,
-          plate: MONITORED_VEHICLE.plate,
-          driverName: MONITORED_VEHICLE.driverName,
+          id: vehicles[0].id,
+          model: vehicles[0].name,
+          plate: vehicles[0].plate,
+          driverName: vehicles[0].driverName,
         }}
       />
     );
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-deep)", fontFamily: "Barlow, sans-serif" }}>
-      {/* ── FLEET SIDEBAR NAVIGATION ─────────────────── */}
-      <aside className="flex flex-col w-64 border-r relative z-20 shrink-0" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
-        {/* Brand Header */}
-        <div className="px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 flex items-center justify-center" style={{ border: "1px solid var(--cyan-dim)", background: "rgba(0,212,255,0.08)" }}>
-              <Truck size={18} style={{ color: "var(--cyan)" }} />
-            </div>
-            <div>
-              <div className="hud-display text-base font-bold tracking-wider" style={{ color: "var(--cyan)" }}>
-                AUTOVUE<span style={{ color: "var(--text-primary)" }}>FLEET</span>
-              </div>
-              <div className="hud-label text-[9px]" style={{ color: "var(--text-muted)" }}>
-                FLEET MANAGEMENT PORTAL
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Fleet Supervisor Session Profile */}
-        <div className="px-5 py-3 border-b" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.2)" }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-6 h-6 rounded-none flex items-center justify-center bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 shrink-0">
-                <User size={12} />
-              </div>
-              <div className="truncate">
-                <div className="text-xs font-bold text-zinc-200 truncate">Pratham S.</div>
-                <div className="text-[9px] font-mono text-zinc-500">FLEET MANAGER</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-[9px] font-mono text-green-400">ONLINE</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Fleet Gateway Stream Status Indicator */}
-        <div className="px-5 py-2.5 border-b" style={{ borderColor: "var(--border)", background: "rgba(0,212,255,0.02)" }}>
-          <div className="flex items-center justify-between text-[10px] font-mono">
-            <span className="text-zinc-500">TELEMETRY GATEWAY:</span>
-            <span className={isConnected ? "text-green-400 font-bold" : "text-amber-400 font-bold"}>
-              {isConnected ? "LIVE STREAM" : "SEARCHING"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-[10px] font-mono mt-1">
-            <span className="text-zinc-500">FASTAPI SERVER:</span>
-            <span className={isBackendHealthy ? "text-cyan-400" : "text-red-400"}>
-              {isBackendHealthy ? "ONLINE (200 OK)" : "OFFLINE"}
-            </span>
-          </div>
-        </div>
-
-        {/* Navigation Items */}
-        <nav className="flex-1 py-3 px-3 space-y-1 overflow-y-auto">
-          {([
-            { id: "overview", icon: Activity, label: "Fleet Command", badge: "Live" },
-            { id: "vehicles", icon: Car, label: "Vehicles Registry", badge: "1 Active" },
-            { id: "driver", icon: Zap, label: "Driver AI Scorecard" },
-            { id: "map", icon: Navigation2, label: "Live Fleet Map", badge: "GPS" },
-            { id: "maintenance", icon: Wrench, label: "Maintenance & DTCs", alert: telemetry.dtcs.length > 0 },
-            { id: "settings", icon: Settings, label: "Gateway & Settings" },
-          ] as { id: FleetTab; icon: any; label: string; badge?: string; alert?: boolean }[]).map(({ id, icon: Icon, label, badge, alert }) => (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              className="nav-item w-full flex items-center justify-between px-3 py-2.5 rounded-none text-left relative group cursor-pointer transition-colors"
-              style={{
-                color: activeTab === id ? "var(--cyan)" : "var(--text-secondary)",
-                background: activeTab === id ? "rgba(0,212,255,0.08)" : "transparent",
-                borderLeft: activeTab === id ? "3px solid var(--cyan)" : "3px solid transparent",
-              }}
-            >
-              <div className="flex items-center gap-3">
-                <Icon size={16} />
-                <span className="text-xs font-semibold">{label}</span>
-              </div>
-              {alert && (
-                <span className="w-4 h-4 text-[9px] font-bold flex items-center justify-center bg-red-500 text-white font-mono">
-                  {telemetry.dtcs.length}
-                </span>
-              )}
-              {!alert && badge && (
-                <span className="text-[9px] font-mono text-zinc-500 group-hover:text-cyan-400">
-                  {badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        {/* Fast Action: Open Telemetry HUD */}
-        <div className="p-4 border-t" style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.25)" }}>
-          <button
-            onClick={() => setSelectedVehicle(true)}
-            className="w-full py-2.5 px-3 flex items-center justify-center gap-2 text-xs font-bold uppercase transition-all border border-cyan-500/50 hover:border-cyan-400 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 cursor-pointer shadow-[0_0_15px_rgba(0,212,255,0.2)]"
+    <div className="flex h-screen overflow-hidden text-slate-100 bg-[#080C14] font-sans select-none">
+      {/* ── TOAST NOTIFICATION ── */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-5 right-6 z-50 flex items-center gap-2.5 px-4 py-2.5 bg-emerald-500/90 text-slate-950 font-semibold text-xs rounded-xl shadow-2xl backdrop-blur-md"
           >
-            <Eye size={14} />
-            <span>LAUNCH VEHICLE HUD</span>
-            <ArrowRight size={13} />
-          </button>
-          <div className="text-[9px] font-mono text-zinc-500 text-center mt-2">
-            INSPECT UNIT-01 COCKPIT
+            <CheckCircle size={16} />
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── LEFT SIDEBAR ────────────────────────────────────── */}
+      <aside className="w-64 border-r border-[#1A263D] bg-[#0B101D] flex flex-col justify-between shrink-0 z-20">
+        <div>
+          {/* Logo / Brand Header */}
+          <div className="px-6 py-6 border-b border-[#1A263D]/80">
+            <div className="flex items-center gap-3">
+              {/* Car outline + ECG pulse icon */}
+              <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-[0_0_15px_rgba(0,212,255,0.15)]">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2" />
+                  <circle cx="7" cy="17" r="2" />
+                  <circle cx="17" cy="17" r="2" />
+                </svg>
+              </div>
+              <div>
+                <div className="flex items-center text-base font-extrabold tracking-tight">
+                  <span className="text-white">AUTOVUE</span>
+                  <span className="text-cyan-400">FLEET</span>
+                </div>
+                <div className="text-[9px] tracking-widest uppercase font-semibold text-slate-500">
+                  FLEET MANAGEMENT PORTAL
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Navigation Links */}
+          <nav className="p-3 space-y-1 mt-2">
+            {[
+              { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
+              { id: "devices", icon: Car, label: "Fleet Devices" },
+              { id: "monitoring", icon: Activity, label: "Live Monitoring" },
+              { id: "analytics", icon: BarChart2, label: "Analytics" },
+              { id: "reports", icon: FileText, label: "Reports" },
+              { id: "alerts", icon: Bell, label: "Alerts", count: telemetry.dtcs.length > 0 ? telemetry.dtcs.length : 1 },
+              { id: "settings", icon: Settings, label: "Settings" },
+            ].map(({ id, icon: Icon, label, count }) => {
+              const isActive = activeTab === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id as FleetTab)}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
+                    isActive
+                      ? "bg-gradient-to-r from-cyan-500/20 to-teal-500/10 text-white border border-cyan-500/30 shadow-[0_0_20px_rgba(0,212,255,0.12)]"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-[#121B2F]"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon size={18} className={isActive ? "text-cyan-400" : "text-slate-400"} />
+                    <span>{label}</span>
+                  </div>
+                  {count !== undefined && count > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Sidebar Footer: System Status & User Profile */}
+        <div className="p-3 space-y-2 border-t border-[#1A263D]/80">
+          {/* System Online Badge Card */}
+          <div className="p-3 rounded-xl bg-[#0F1626] border border-[#1A263D] flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse" />
+                <span className="text-xs font-semibold text-slate-200">System Online</span>
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                Last updated • {systemTime}
+              </div>
+            </div>
+            <div className="text-[10px] font-mono text-cyan-400/80">
+              {isConnected ? "WS 200" : "SYNC"}
+            </div>
+          </div>
+
+          {/* User Profile */}
+          <div className="p-2.5 rounded-xl hover:bg-[#121B2F] transition-colors flex items-center justify-between cursor-pointer">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold shadow-md">
+                P
+              </div>
+              <div className="leading-tight">
+                <div className="text-xs font-bold text-slate-200">Pratham U</div>
+                <div className="text-[10px] text-slate-500">Fleet Admin</div>
+              </div>
+            </div>
+            <ChevronDown size={14} className="text-slate-500" />
           </div>
         </div>
       </aside>
 
-      {/* ── FLEET MAIN CONTENT AREA ────────────────── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ── MAIN CONTENT VIEWPORT ───────────────────────────── */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#080C14]">
         {/* Top Header Bar */}
-        <header className="flex items-center justify-between px-6 py-3 border-b shrink-0" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
-          <div className="flex items-center gap-4">
-            <div>
-              <div className="hud-display text-lg font-bold uppercase tracking-wider" style={{ color: "var(--text-primary)" }}>
-                {activeTab === "overview" && "FLEET COMMAND OPERATIONS"}
-                {activeTab === "vehicles" && "FLEET ASSETS & VEHICLE REGISTRY"}
-                {activeTab === "driver" && "DRIVER TELEMETRY & XGBOOST SCORECARD"}
-                {activeTab === "map" && "LIVE FLEET GPS LOCATION & HEATMAPS"}
-                {activeTab === "maintenance" && "FLEET MAINTENANCE & DIAGNOSTIC TICKETS"}
-                {activeTab === "settings" && "ENTERPRISE TELEMATICS GATEWAY SETTINGS"}
-              </div>
-              <div className="flex items-center gap-3 text-[10px] font-mono text-zinc-400 mt-0.5">
-                <span className="text-cyan-400 font-bold">{MONITORED_VEHICLE.department}</span>
-                <span>|</span>
-                <span>HUB: {MONITORED_VEHICLE.hubLocation}</span>
-                <span>|</span>
-                <span>SYSTEM TIME: {systemTime}</span>
-              </div>
-            </div>
+        <header className="px-8 py-5 border-b border-[#1A263D] flex items-center justify-between shrink-0 bg-[#0B101D]/70 backdrop-blur-md">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-white">
+              Fleet Manager
+            </h1>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Monitor. Manage. Drive Smart.
+            </p>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Fleet Health Indicator */}
-            <div
-              className="flex items-center gap-2 px-3 py-1.5 border font-mono"
-              style={{
-                borderColor: healthStatus.status === "Healthy" ? "rgba(0,255,136,0.3)" : healthStatus.status === "Warning" ? "rgba(255,184,0,0.3)" : "rgba(255,51,51,0.3)",
-                background: healthStatus.status === "Healthy" ? "rgba(0,255,136,0.06)" : healthStatus.status === "Warning" ? "rgba(255,184,0,0.06)" : "rgba(255,51,51,0.06)",
-              }}
+            {/* Primary Action Button: Add New Fleet Device */}
+            <button
+              onClick={() => setIsAddDeviceOpen(true)}
+              className="px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-semibold text-xs rounded-xl flex items-center gap-2 shadow-[0_0_20px_rgba(0,212,255,0.25)] transition-all cursor-pointer active:scale-95"
             >
-              {healthStatus.status === "Healthy" ? (
-                <CheckCircle size={14} style={{ color: "var(--green)" }} />
-              ) : healthStatus.status === "Warning" ? (
-                <AlertCircle size={14} style={{ color: "var(--amber)" }} />
-              ) : (
-                <AlertTriangle size={14} style={{ color: "var(--red)" }} className="animate-blink" />
-              )}
-              <span
-                className="text-xs font-bold"
-                style={{ color: healthStatus.status === "Healthy" ? "var(--green)" : healthStatus.status === "Warning" ? "var(--amber)" : "var(--red)" }}
-              >
-                FLEET HEALTH: {healthStatus.score}% {healthStatus.status.toUpperCase()}
-              </span>
-            </div>
+              <Plus size={15} strokeWidth={2.5} />
+              <span>Add New Fleet Device</span>
+            </button>
+
+            {/* Notification Bell */}
+            <button
+              onClick={() => setActiveTab("alerts")}
+              className="w-9 h-9 rounded-xl bg-[#0F1626] border border-[#1A263D] hover:border-slate-600 text-slate-300 hover:text-white flex items-center justify-center relative cursor-pointer transition-colors"
+              title="Notifications"
+            >
+              <Bell size={16} />
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500" />
+            </button>
 
             {/* Theme Toggle */}
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="px-3 py-1.5 flex items-center gap-2 transition-colors cursor-pointer border"
-              style={{ borderColor: "var(--border)", background: "rgba(0,0,0,0.3)" }}
+              className="w-9 h-9 rounded-xl bg-[#0F1626] border border-[#1A263D] hover:border-slate-600 text-slate-300 hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+              title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
             >
-              {theme === "dark" ? <Sun size={14} style={{ color: "var(--amber)" }} /> : <Moon size={14} style={{ color: "var(--cyan)" }} />}
-              <span className="hud-label text-[9px]">
-                {theme === "dark" ? "LIGHT" : "DARK"}
-              </span>
+              {theme === "dark" ? <Sun size={16} className="text-amber-400" /> : <Moon size={16} className="text-cyan-400" />}
             </button>
           </div>
         </header>
 
         {/* Tab Content Router */}
-        <main className="flex-1 overflow-hidden">
+        <main className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
-              className="h-full"
-              initial={{ opacity: 0, y: 4 }}
+              initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.18 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.16 }}
             >
-              {activeTab === "overview" && (
-                <FleetOverviewTab
+              {activeTab === "dashboard" && (
+                <DashboardOverviewView
                   telemetryState={telemetryState}
+                  vehicles={vehicles}
                   onOpenVehicle={() => setSelectedVehicle(true)}
-                  speedUnitStr={speedUnitStr}
-                  tempUnitStr={tempUnitStr}
+                  onViewAllDevices={() => setActiveTab("devices")}
+                  onViewAllAlerts={() => setActiveTab("alerts")}
+                  onViewMap={() => setActiveTab("monitoring")}
                   displayVss={displayVss}
-                  displayCoolant={displayCoolant}
-                  formatDuration={formatDuration}
-                />
-              )}
-
-              {activeTab === "vehicles" && (
-                <FleetVehiclesTab
-                  telemetryState={telemetryState}
-                  onOpenVehicle={() => setSelectedVehicle(true)}
                   speedUnitStr={speedUnitStr}
-                  tempUnitStr={tempUnitStr}
-                  displayVss={displayVss}
-                  displayCoolant={displayCoolant}
+                  mileageVal={mileageVal}
                 />
               )}
 
-              {activeTab === "driver" && (
-                <FleetDriverScorecardTab
+              {activeTab === "devices" && (
+                <FleetDevicesView
+                  vehicles={vehicles}
+                  telemetryState={telemetryState}
+                  onOpenVehicle={() => setSelectedVehicle(true)}
+                  onOpenAddDevice={() => setIsAddDeviceOpen(true)}
+                  displayVss={displayVss}
+                  speedUnitStr={speedUnitStr}
+                  mileageVal={mileageVal}
+                />
+              )}
+
+              {activeTab === "monitoring" && (
+                <LiveMonitoringView
+                  telemetryState={telemetryState}
+                  onOpenVehicle={() => setSelectedVehicle(true)}
+                  displayVss={displayVss}
+                  speedUnitStr={speedUnitStr}
+                  displayCoolant={displayCoolant}
+                  tempUnitStr={tempUnitStr}
+                />
+              )}
+
+              {activeTab === "analytics" && (
+                <AnalyticsScorecardView
                   telemetryState={telemetryState}
                   onOpenVehicle={() => setSelectedVehicle(true)}
                 />
               )}
 
-              {activeTab === "map" && (
-                <GPSMap telemetry={telemetry} speedUnit={speedUnit} />
+              {activeTab === "reports" && (
+                <ReportsMaintenanceView
+                  telemetryState={telemetryState}
+                  onOpenVehicle={() => setSelectedVehicle(true)}
+                />
               )}
 
-              {activeTab === "maintenance" && (
-                <FleetMaintenanceTab
+              {activeTab === "alerts" && (
+                <AlertsDiagnosticsView
                   telemetryState={telemetryState}
                   onOpenVehicle={() => setSelectedVehicle(true)}
                 />
               )}
 
               {activeTab === "settings" && (
-                <FleetSettingsTab
+                <SettingsGatewayView
                   telemetryState={telemetryState}
+                  theme={theme}
+                  setTheme={setTheme}
                 />
               )}
             </motion.div>
           </AnimatePresence>
         </main>
       </div>
+
+      {/* ── ADD NEW FLEET DEVICE MODAL ──────────────────────── */}
+      <AnimatePresence>
+        {isAddDeviceOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-lg bg-[#0F1626] border border-[#1A263D] rounded-2xl shadow-2xl p-6 text-slate-200"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-[#1A263D]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                    <Car size={16} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-white">Add New Fleet Device</h3>
+                    <p className="text-xs text-slate-400">Pair an OBD-II CAN bus adapter to the gateway</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsAddDeviceOpen(false)}
+                  className="w-7 h-7 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleRegisterDevice} className="space-y-4 mt-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400 block mb-1">
+                      Vehicle Model & Engine
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newDevice.name}
+                      onChange={(e) => setNewDevice({ ...newDevice, name: e.target.value })}
+                      placeholder="e.g. Volkswagen Golf 1.4 TSI"
+                      className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-xs text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400 block mb-1">
+                      Registration / Plate No
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newDevice.plate}
+                      onChange={(e) => setNewDevice({ ...newDevice, plate: e.target.value })}
+                      placeholder="e.g. KA 20 PX 6721"
+                      className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-xs text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400 block mb-1">
+                      VIN (Vehicle Identification No)
+                    </label>
+                    <input
+                      type="text"
+                      value={newDevice.vin}
+                      onChange={(e) => setNewDevice({ ...newDevice, vin: e.target.value })}
+                      placeholder="e.g. WVWZZZ1KZ9W049182"
+                      className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-xs text-white font-mono focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400 block mb-1">
+                      Assigned Driver
+                    </label>
+                    <input
+                      type="text"
+                      value={newDevice.driverName}
+                      onChange={(e) => setNewDevice({ ...newDevice, driverName: e.target.value })}
+                      placeholder="e.g. Kavya R."
+                      className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-xs text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 block mb-1">
+                    OBD-II CAN Protocol
+                  </label>
+                  <select
+                    value={newDevice.protocol}
+                    onChange={(e) => setNewDevice({ ...newDevice, protocol: e.target.value })}
+                    className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-xs text-white focus:outline-none focus:border-cyan-400"
+                  >
+                    <option value="OBD-II ISO 15765-4 CAN (11-bit, 500 kbaud)">
+                      OBD-II ISO 15765-4 CAN (11-bit ID, 500 kbaud) - Standard
+                    </option>
+                    <option value="OBD-II ISO 15765-4 CAN (29-bit, 500 kbaud)">
+                      OBD-II ISO 15765-4 CAN (29-bit ID, 500 kbaud) - Extended
+                    </option>
+                    <option value="ISO 14230-4 KWP2000 (Fast Init)">
+                      ISO 14230-4 KWP2000 (Fast Init, 10.4 kbaud)
+                    </option>
+                    <option value="SAE J1939 Commercial Heavy-Duty">
+                      SAE J1939 Commercial Vehicle Protocol (250 kbaud)
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 block mb-1">
+                    Department / Node Assignment
+                  </label>
+                  <input
+                    type="text"
+                    value={newDevice.department}
+                    onChange={(e) => setNewDevice({ ...newDevice, department: e.target.value })}
+                    placeholder="e.g. Logistics Hub - Mangaluru Node"
+                    className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-xs text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#1A263D]">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddDeviceOpen(false)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold rounded-xl cursor-pointer shadow-[0_0_15px_rgba(0,212,255,0.2)]"
+                  >
+                    Pair Device
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
 
-// ─── 1. FLEET OVERVIEW TAB ────────────────────────────────────
-interface FleetSubtabProps {
+// ─── 1. DASHBOARD OVERVIEW VIEW (Matching Reference Image) ───────
+interface DashboardOverviewProps {
   telemetryState: LiveTelemetryState;
+  vehicles: MonitoredVehicle[];
   onOpenVehicle: () => void;
-  speedUnitStr: string;
-  tempUnitStr: string;
+  onViewAllDevices: () => void;
+  onViewAllAlerts: () => void;
+  onViewMap: () => void;
   displayVss: number;
-  displayCoolant: number;
-  formatDuration: (s: number) => string;
+  speedUnitStr: string;
+  mileageVal: number;
 }
 
-const FleetOverviewTab: React.FC<FleetSubtabProps> = ({
+const DashboardOverviewView: React.FC<DashboardOverviewProps> = ({
+  telemetryState,
+  vehicles,
+  onOpenVehicle,
+  onViewAllDevices,
+  onViewAllAlerts,
+  onViewMap,
+  displayVss,
+  speedUnitStr,
+  mileageVal,
+}) => {
+  const { telemetry, healthStatus, currentBehavior } = telemetryState;
+  const [performanceRange, setPerformanceRange] = useState<"7d" | "24h" | "live">("7d");
+
+  // Performance dual-line dataset
+  const performanceData = useMemo(() => {
+    return [
+      { day: "Oct 22", speed: 28, fuel: 58 },
+      { day: "Oct 23", speed: 62, fuel: 65 },
+      { day: "Oct 24", speed: 52, fuel: 55 },
+      { day: "Oct 25", speed: 68, fuel: 62 },
+      { day: "Oct 26", speed: 82, fuel: 88 },
+      { day: "Oct 27", speed: 70, fuel: 75 },
+      { day: "Oct 28", speed: displayVss > 0 ? Math.min(100, displayVss) : 48, fuel: Math.min(100, Math.round(mileageVal * 5.5)) },
+    ];
+  }, [displayVss, mileageVal]);
+
+  const activeAlertsCount = telemetry.dtcs.length > 0 ? telemetry.dtcs.length : 1;
+  const healthPercent = healthStatus.score || 92;
+
+  return (
+    <div className="space-y-6">
+      {/* ── ROW 1: FOUR STAT CARDS ───────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Total Vehicles */}
+        <div className="p-5 rounded-2xl bg-[#0F1626] border border-[#1A263D] hover:border-cyan-500/30 transition-all flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.15)]">
+              <Car size={22} />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-slate-400">Total Vehicles</div>
+              <div className="text-2xl font-bold text-white tracking-tight mt-0.5">
+                {vehicles.length}
+              </div>
+              <div className="text-xs font-semibold text-emerald-400 flex items-center gap-1 mt-0.5">
+                <span>↑ +1</span>
+              </div>
+            </div>
+          </div>
+          {/* Blue Sparkline SVG */}
+          <div className="w-24 h-10">
+            <svg viewBox="0 0 100 40" className="w-full h-full overflow-visible">
+              <path
+                d="M 0 30 Q 25 35, 45 20 T 90 10"
+                fill="none"
+                stroke="#3B82F6"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+        </div>
+
+        {/* Card 2: Active Vehicles */}
+        <div className="p-5 rounded-2xl bg-[#0F1626] border border-[#1A263D] hover:border-emerald-500/30 transition-all flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)]">
+              <Activity size={22} />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-slate-400">Active Vehicles</div>
+              <div className="text-2xl font-bold text-white tracking-tight mt-0.5">
+                {vehicles.length}
+              </div>
+              <div className="text-xs font-semibold text-emerald-400 flex items-center gap-1 mt-0.5">
+                <span>↑ 100%</span>
+              </div>
+            </div>
+          </div>
+          {/* Green Sparkline SVG */}
+          <div className="w-24 h-10">
+            <svg viewBox="0 0 100 40" className="w-full h-full overflow-visible">
+              <path
+                d="M 0 32 Q 30 15, 60 28 T 95 12"
+                fill="none"
+                stroke="#10B981"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+        </div>
+
+        {/* Card 3: Alerts */}
+        <div className="p-5 rounded-2xl bg-[#0F1626] border border-[#1A263D] hover:border-amber-500/30 transition-all flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)]">
+              <AlertTriangle size={22} />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-slate-400">Alerts</div>
+              <div className="text-2xl font-bold text-white tracking-tight mt-0.5">
+                {activeAlertsCount}
+              </div>
+              <div className="text-xs font-semibold text-amber-400 flex items-center gap-1 mt-0.5">
+                <span>↓ -2</span>
+              </div>
+            </div>
+          </div>
+          {/* Amber Sparkline SVG */}
+          <div className="w-24 h-10">
+            <svg viewBox="0 0 100 40" className="w-full h-full overflow-visible">
+              <path
+                d="M 0 25 Q 30 10, 50 30 T 95 20"
+                fill="none"
+                stroke="#F59E0B"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+        </div>
+
+        {/* Card 4: Avg. Fuel Efficiency */}
+        <div className="p-5 rounded-2xl bg-[#0F1626] border border-[#1A263D] hover:border-purple-500/30 transition-all flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shadow-[0_0_12px_rgba(139,92,246,0.15)]">
+              <Fuel size={22} />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-slate-400">Avg. Fuel Efficiency</div>
+              <div className="text-2xl font-bold text-white tracking-tight mt-0.5">
+                {mileageVal > 0 ? `${mileageVal.toFixed(1)} km/L` : "15.8 km/L"}
+              </div>
+              <div className="text-xs font-semibold text-emerald-400 flex items-center gap-1 mt-0.5">
+                <span>↑ +2.1%</span>
+              </div>
+            </div>
+          </div>
+          {/* Purple Sparkline SVG */}
+          <div className="w-24 h-10">
+            <svg viewBox="0 0 100 40" className="w-full h-full overflow-visible">
+              <path
+                d="M 0 28 Q 25 35, 50 15 T 95 22"
+                fill="none"
+                stroke="#8B5CF6"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ROW 2: MAP & FLEET DEVICES TABLE ─────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left: Fleet Overview Map (approx 55% width) - SAT View & Vehicle Point Only (No Traveled Line) */}
+        <div className="lg:col-span-7 h-[360px] rounded-2xl overflow-hidden border border-[#1A263D] bg-[#0F1626]">
+          <GPSMap
+            telemetry={telemetry}
+            speedUnit={telemetryState.speedUnit}
+            compact={true}
+            showTraveledPath={false}
+            initialMapStyle="satellite"
+            onViewAll={onViewMap}
+          />
+        </div>
+
+        {/* Right: Fleet Devices Roster Table (approx 45% width) */}
+        <div className="lg:col-span-5 h-[360px] rounded-2xl border border-[#1A263D] bg-[#0F1626] flex flex-col overflow-hidden">
+          {/* Table Header Bar */}
+          <div className="px-5 py-3.5 border-b border-[#1A263D] flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-6 h-6 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+                <Car size={15} />
+              </div>
+              <span className="font-semibold text-sm text-white tracking-wide">Fleet Devices</span>
+            </div>
+            <button
+              onClick={onViewAllDevices}
+              className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <span>View All</span>
+              <span>→</span>
+            </button>
+          </div>
+
+          {/* Table Content */}
+          <div className="flex-1 overflow-y-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="text-[11px] uppercase tracking-wider text-slate-400 border-b border-[#1A263D]/60 bg-[#0B101D]/50 sticky top-0">
+                <tr>
+                  <th className="py-2.5 px-4 font-semibold">Vehicle</th>
+                  <th className="py-2.5 px-3 font-semibold">Status</th>
+                  <th className="py-2.5 px-3 font-semibold">Speed</th>
+                  <th className="py-2.5 px-3 font-semibold">Fuel</th>
+                  <th className="py-2.5 px-3 font-semibold">Last Update</th>
+                  <th className="py-2.5 px-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1A263D]/40">
+                {/* Monitored Live Vehicle Row */}
+                <tr
+                  onClick={onOpenVehicle}
+                  className="hover:bg-[#152035]/80 transition-colors cursor-pointer group"
+                >
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-300 group-hover:text-cyan-400 group-hover:border-cyan-500/40 transition-colors">
+                        <Car size={14} />
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-100 group-hover:text-cyan-300 transition-colors font-mono">
+                          {vehicles[0].plate}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {vehicles[0].name}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-3 px-3">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      Online
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 font-mono text-slate-200">
+                    {displayVss} {speedUnitStr}
+                  </td>
+                  <td className="py-3 px-3 font-mono text-slate-200">
+                    {telemetry.fuelLevelPct ?? 68}%
+                  </td>
+                  <td className="py-3 px-3 text-slate-400 text-[11px]">
+                    Just now
+                  </td>
+                  <td className="py-3 px-2 text-right pr-4 text-slate-500 group-hover:text-cyan-400 transition-colors">
+                    <ChevronRight size={15} />
+                  </td>
+                </tr>
+
+                {/* Additional paired devices if registered */}
+                {vehicles.slice(1).map((v) => (
+                  <tr
+                    key={v.id}
+                    onClick={onOpenVehicle}
+                    className="hover:bg-[#152035]/80 transition-colors cursor-pointer group"
+                  >
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-300">
+                          <Car size={14} />
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-100 font-mono">{v.plate}</div>
+                          <div className="text-[10px] text-slate-400">{v.name}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        Online
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 font-mono text-slate-200">48 km/h</td>
+                    <td className="py-3 px-3 font-mono text-slate-200">73%</td>
+                    <td className="py-3 px-3 text-slate-400 text-[11px]">5 min ago</td>
+                    <td className="py-3 px-2 text-right pr-4 text-slate-500 group-hover:text-cyan-400 transition-colors">
+                      <ChevronRight size={15} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ROW 3: PERFORMANCE, FUEL & HEALTH, RECENT ALERTS ──── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6">
+        {/* Card 1: Fleet Performance (5 cols) */}
+        <div className="lg:col-span-5 rounded-2xl border border-[#1A263D] bg-[#0F1626] p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between pb-3 border-b border-[#1A263D]">
+            <div className="flex items-center gap-2">
+              <BarChart2 size={16} className="text-cyan-400" />
+              <span className="font-semibold text-sm text-white">Fleet Performance</span>
+            </div>
+
+            {/* Selector dropdown */}
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-[#090D17] border border-[#1A263D] rounded-lg text-xs text-slate-300">
+              <span>Last 7 Days</span>
+              <ChevronDown size={13} className="text-slate-400" />
+            </div>
+          </div>
+
+          {/* Performance Legend */}
+          <div className="flex items-center gap-5 pt-3 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+              <span className="text-slate-300 font-medium">Avg. Speed</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+              <span className="text-slate-300 font-medium">Fuel Efficiency</span>
+            </div>
+          </div>
+
+          {/* Recharts Area Chart */}
+          <div className="h-44 w-full mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={performanceData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="speedGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="fuelGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10B981" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#10B981" stopOpacity={0.0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1A263D" vertical={false} />
+                <XAxis
+                  dataKey="day"
+                  stroke="#64748B"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="#64748B"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                  domain={[0, 100]}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#0F1626",
+                    borderColor: "#1A263D",
+                    borderRadius: "0.75rem",
+                    color: "#F8FAFC",
+                    fontSize: "11px",
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="speed"
+                  name="Avg. Speed"
+                  stroke="#3B82F6"
+                  strokeWidth={2.5}
+                  fillOpacity={1}
+                  fill="url(#speedGrad)"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="fuel"
+                  name="Fuel Efficiency"
+                  stroke="#10B981"
+                  strokeWidth={2.5}
+                  fillOpacity={1}
+                  fill="url(#fuelGrad)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Card 2: Fuel & Health (3 cols) */}
+        <div className="lg:col-span-3 rounded-2xl border border-[#1A263D] bg-[#0F1626] p-5 flex flex-col justify-between">
+          <div className="flex items-center gap-2 pb-3 border-b border-[#1A263D]">
+            <Fuel size={16} className="text-cyan-400" />
+            <span className="font-semibold text-sm text-white">Fuel & Health</span>
+          </div>
+
+          {/* Donut Progress Ring + Side Stats */}
+          <div className="flex items-center justify-between gap-4 py-3">
+            {/* Donut Gauge */}
+            <div className="relative w-28 h-28 flex items-center justify-center shrink-0">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                {/* Background Track */}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="40"
+                  fill="none"
+                  stroke="#1A263D"
+                  strokeWidth="10"
+                />
+                {/* Progress Arc */}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="40"
+                  fill="none"
+                  stroke="url(#donutGrad)"
+                  strokeWidth="10"
+                  strokeDasharray={2 * Math.PI * 40}
+                  strokeDashoffset={2 * Math.PI * 40 * (1 - healthPercent / 100)}
+                  strokeLinecap="round"
+                  className="transition-all duration-1000 ease-out"
+                />
+                <defs>
+                  <linearGradient id="donutGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#10B981" />
+                    <stop offset="100%" stopColor="#00D4FF" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div className="absolute flex flex-col items-center justify-center text-center">
+                <span className="text-xl font-black text-white tracking-tight">{healthPercent}%</span>
+                <span className="text-[9px] text-slate-400 uppercase font-semibold">Fleet Health</span>
+              </div>
+            </div>
+
+            {/* Side Stats */}
+            <div className="space-y-3 flex-1 min-w-0">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400">
+                    <Fuel size={14} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white font-mono">
+                      {mileageVal > 0 ? `${mileageVal.toFixed(1)} km/L` : "15.8 km/L"}
+                    </div>
+                    <div className="text-[10px] text-slate-400">Avg. Fuel Efficiency</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                    <Leaf size={14} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white font-mono">
+                      {currentBehavior === "Economical" ? "-8%" : currentBehavior === "Moderate" ? "-2%" : "+14%"}
+                    </div>
+                    <div className="text-[10px] text-slate-400">Fuel vs Baseline</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-[#1A263D]/60 flex items-center justify-between text-[11px] text-slate-400">
+            <span>Status: <strong className="text-emerald-400">{healthStatus.status}</strong></span>
+            <span>XGBoost: <strong className="text-cyan-400">{currentBehavior}</strong></span>
+          </div>
+        </div>
+
+        {/* Card 3: Recent Alerts (4 cols) */}
+        <div className="lg:col-span-4 rounded-2xl border border-[#1A263D] bg-[#0F1626] p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between pb-3 border-b border-[#1A263D]">
+            <div className="flex items-center gap-2">
+              <Bell size={16} className="text-cyan-400" />
+              <span className="font-semibold text-sm text-white">Recent Alerts</span>
+            </div>
+            <button
+              onClick={onViewAllAlerts}
+              className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <span>View All</span>
+              <span>→</span>
+            </button>
+          </div>
+
+          {/* Alert items */}
+          <div className="space-y-3 py-2 flex-1">
+            {/* Alert 1 */}
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/25 flex items-start gap-3">
+              <div className="w-7 h-7 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertTriangle size={15} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-white truncate">
+                    Vehicle {vehicles[0].plate}
+                  </div>
+                  <span className="text-[10px] text-slate-400 shrink-0">7 min ago</span>
+                </div>
+                <div className="text-[11px] text-red-300 mt-0.5">
+                  {telemetry.dtcs.length > 0
+                    ? `DTC Active: ${telemetry.dtcs.join(", ")}`
+                    : "Fuel Level Low (12%) - Range 84 km"}
+                </div>
+              </div>
+            </div>
+
+            {/* Alert 2 */}
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/25 flex items-start gap-3">
+              <div className="w-7 h-7 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertCircle size={15} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-white truncate">
+                    Vehicle {vehicles[0].plate}
+                  </div>
+                  <span className="text-[10px] text-slate-400 shrink-0">12 min ago</span>
+                </div>
+                <div className="text-[11px] text-blue-300 mt-0.5 truncate">
+                  Entered Geofence: Mangaluru Zone
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-[#1A263D]/60 flex items-center justify-between text-[11px]">
+            <span className="text-slate-400">Telegram Dispatch:</span>
+            <span className={telemetryState.telegramEnabled ? "text-emerald-400 font-semibold" : "text-slate-500"}>
+              {telemetryState.telegramEnabled ? "Configured" : "Disabled in Settings"}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── 2. FLEET DEVICES VIEW ───────────────────────────────────────
+const FleetDevicesView: React.FC<{
+  vehicles: MonitoredVehicle[];
+  telemetryState: LiveTelemetryState;
+  onOpenVehicle: () => void;
+  onOpenAddDevice: () => void;
+  displayVss: number;
+  speedUnitStr: string;
+  mileageVal: number;
+}> = ({
+  vehicles,
   telemetryState,
   onOpenVehicle,
-  speedUnitStr,
-  tempUnitStr,
+  onOpenAddDevice,
   displayVss,
-  displayCoolant,
-  formatDuration,
+  speedUnitStr,
+  mileageVal,
 }) => {
-  const {
-    telemetry,
-    history,
-    tripTime,
-    totalDistance,
-    isConnected,
-    healthStatus,
-    currentBehavior,
-    driverML,
-    fuelML,
-  } = telemetryState;
+  const { telemetry, isConnected } = telemetryState;
+  const [filter, setFilter] = useState<"all" | "online" | "idle" | "alert">("all");
+  const [search, setSearch] = useState("");
 
-  const bColor =
-    currentBehavior === "Economical"
-      ? "var(--green)"
-      : currentBehavior === "Moderate"
-      ? "var(--amber)"
-      : "var(--red)";
+  const filtered = vehicles.filter((v) => {
+    if (filter !== "all" && v.status.toLowerCase() !== filter) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return (
+        v.plate.toLowerCase().includes(q) ||
+        v.name.toLowerCase().includes(q) ||
+        v.driverName.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
 
-  const mileageVal = fuelML?.mileage_kmpl ?? 0;
+  return (
+    <div className="space-y-6">
+      {/* Top action & filter bar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 p-5 rounded-2xl bg-[#0F1626] border border-[#1A263D]">
+        <div className="flex items-center gap-3 flex-1 max-w-md">
+          <div className="relative w-full">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by license plate, vehicle, or driver..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {(["all", "online", "idle", "alert"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setFilter(mode)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold capitalize transition-all cursor-pointer ${
+                filter === mode
+                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                  : "text-slate-400 hover:text-white bg-[#090D17] border border-[#1A263D]"
+              }`}
+            >
+              {mode}
+            </button>
+          ))}
+          <button
+            onClick={onOpenAddDevice}
+            className="px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-2 cursor-pointer shadow-[0_0_15px_rgba(0,212,255,0.2)]"
+          >
+            <Plus size={15} />
+            <span>Add Device</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Devices Table Card */}
+      <div className="rounded-2xl border border-[#1A263D] bg-[#0F1626] overflow-hidden">
+        <table className="w-full text-left text-xs">
+          <thead className="text-[11px] uppercase tracking-wider text-slate-400 border-b border-[#1A263D] bg-[#0B101D]">
+            <tr>
+              <th className="py-3 px-5 font-semibold">Vehicle</th>
+              <th className="py-3 px-4 font-semibold">CAN Protocol</th>
+              <th className="py-3 px-4 font-semibold">Assigned Operator</th>
+              <th className="py-3 px-3 font-semibold">Status</th>
+              <th className="py-3 px-3 font-semibold">Live Speed</th>
+              <th className="py-3 px-3 font-semibold">Fuel Econ</th>
+              <th className="py-3 px-4 font-semibold text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#1A263D]/50">
+            {filtered.map((v, i) => (
+              <tr key={v.id} className="hover:bg-[#152035]/60 transition-colors">
+                <td className="py-4 px-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                      <Car size={18} />
+                    </div>
+                    <div>
+                      <div className="font-bold text-white font-mono text-sm">{v.plate}</div>
+                      <div className="text-[11px] text-slate-400">{v.name} ({v.year})</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="py-4 px-4 font-mono text-slate-300 text-[11px]">
+                  {v.protocol}
+                </td>
+                <td className="py-4 px-4">
+                  <div className="font-medium text-slate-200">{v.driverName}</div>
+                  <div className="text-[10px] text-slate-500 font-mono">{v.department}</div>
+                </td>
+                <td className="py-4 px-3">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>{v.status}</span>
+                  </span>
+                </td>
+                <td className="py-4 px-3 font-mono font-bold text-slate-100">
+                  {i === 0 ? `${displayVss} ${speedUnitStr}` : `48 ${speedUnitStr}`}
+                </td>
+                <td className="py-4 px-3 font-mono text-slate-200">
+                  {i === 0 && mileageVal > 0 ? `${mileageVal.toFixed(1)} km/L` : "15.8 km/L"}
+                </td>
+                <td className="py-4 px-4 text-right">
+                  <button
+                    onClick={onOpenVehicle}
+                    className="px-3.5 py-1.5 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 hover:text-cyan-200 border border-cyan-500/40 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Eye size={13} />
+                    <span>Inspect Cockpit</span>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Hardware Specifications Detail Strip */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="p-5 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-2">
+          <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider">CAN Bus Protocol</div>
+          <div className="text-sm font-bold text-white font-mono">{vehicles[0].protocol}</div>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            ISO 15765-4 11-bit standard broadcast CAN interface operating at 500 kbaud for ECU PID polling.
+          </p>
+        </div>
+        <div className="p-5 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-2">
+          <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Engine Architecture</div>
+          <div className="text-sm font-bold text-white font-mono">{vehicles[0].engineSpec}</div>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            FSI naturally-aspirated direct injection engine calibrated for BS6 E10 gasoline fuel ratio.
+          </p>
+        </div>
+        <div className="p-5 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-2">
+          <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Gateway Telemetry Node</div>
+          <div className="text-sm font-bold text-cyan-400 font-mono">
+            {isConnected ? "CONNECTED (FastAPI /api/ws/live)" : "CONNECTING..."}
+          </div>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Streaming live telemetry from vehicle OBD-II adapter at 1000ms polling rate with automatic ping heartbeat.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── 3. LIVE MONITORING VIEW ─────────────────────────────────────
+const LiveMonitoringView: React.FC<{
+  telemetryState: LiveTelemetryState;
+  onOpenVehicle: () => void;
+  displayVss: number;
+  speedUnitStr: string;
+  displayCoolant: number;
+  tempUnitStr: string;
+}> = ({
+  telemetryState,
+  onOpenVehicle,
+  displayVss,
+  speedUnitStr,
+  displayCoolant,
+  tempUnitStr,
+}) => {
+  const { telemetry, history, fuelML } = telemetryState;
   const isImperialSpeed = speedUnitStr === "mph";
 
   return (
-    <div className="h-full overflow-y-auto scroll-area p-6 space-y-6" style={{ background: "var(--bg-deep)" }}>
-      {/* ── Top Fleet KPI Cards ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="p-3.5 panel" style={{ borderColor: "var(--border)" }}>
-          <div className="hud-label text-[9px] mb-1" style={{ color: "var(--text-muted)" }}>FLEET ASSETS</div>
-          <div className="text-xl font-bold font-mono text-cyan-400">1 / 1 UNIT</div>
-          <div className="text-[9px] font-mono text-green-400 mt-1 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-            <span>100% OPERATIONAL</span>
+    <div className="space-y-6">
+      {/* Live Gauge Strip */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="p-4 rounded-2xl border border-[#1A263D] bg-[#0F1626]">
+          <div className="text-[11px] font-semibold text-slate-400">SPEED</div>
+          <div className="text-2xl font-bold font-mono text-cyan-400 mt-1">
+            {displayVss} <span className="text-xs text-slate-500">{speedUnitStr}</span>
           </div>
         </div>
-
-        <div className="p-3.5 panel" style={{ borderColor: "var(--border)" }}>
-          <div className="hud-label text-[9px] mb-1" style={{ color: "var(--text-muted)" }}>HEALTH SCORE</div>
-          <div className="text-xl font-bold font-mono" style={{ color: healthStatus.status === "Healthy" ? "var(--green)" : healthStatus.status === "Warning" ? "var(--amber)" : "var(--red)" }}>
-            {healthStatus.score}%
-          </div>
-          <div className="text-[9px] font-mono text-zinc-400 mt-1 truncate">
-            {healthStatus.status.toUpperCase()} INTEGRITY
+        <div className="p-4 rounded-2xl border border-[#1A263D] bg-[#0F1626]">
+          <div className="text-[11px] font-semibold text-slate-400">ENGINE RPM</div>
+          <div className="text-2xl font-bold font-mono text-white mt-1">
+            {telemetry.rpm.toLocaleString()} <span className="text-xs text-slate-500">rpm</span>
           </div>
         </div>
-
-        <div className="p-3.5 panel" style={{ borderColor: "var(--border)" }}>
-          <div className="hud-label text-[9px] mb-1" style={{ color: "var(--text-muted)" }}>FLEET AVG FUEL</div>
-          <div className="text-xl font-bold font-mono text-green-400">
-            {mileageVal > 0 ? `${mileageVal.toFixed(1)} km/L` : "--"}
-          </div>
-          <div className="text-[9px] font-mono text-zinc-400 mt-1">
-            TIER {fuelML?.tier ?? 1} PHYSICS
+        <div className="p-4 rounded-2xl border border-[#1A263D] bg-[#0F1626]">
+          <div className="text-[11px] font-semibold text-slate-400">COOLANT TEMP</div>
+          <div className="text-2xl font-bold font-mono text-amber-400 mt-1">
+            {displayCoolant} <span className="text-xs text-slate-500">{tempUnitStr}</span>
           </div>
         </div>
-
-        <div className="p-3.5 panel" style={{ borderColor: "var(--border)" }}>
-          <div className="hud-label text-[9px] mb-1" style={{ color: "var(--text-muted)" }}>ACTIVE DTC FAULTS</div>
-          <div className="text-xl font-bold font-mono" style={{ color: telemetry.dtcs.length > 0 ? "var(--red)" : "var(--green)" }}>
-            {telemetry.dtcs.length} CODES
-          </div>
-          <div className="text-[9px] font-mono text-zinc-400 mt-1">
-            {telemetry.dtcs.length === 0 ? "ALL CLEAR" : telemetry.dtcs.join(", ")}
+        <div className="p-4 rounded-2xl border border-[#1A263D] bg-[#0F1626]">
+          <div className="text-[11px] font-semibold text-slate-400">THROTTLE</div>
+          <div className="text-2xl font-bold font-mono text-cyan-400 mt-1">
+            {telemetry.throttle}%
           </div>
         </div>
-
-        <div className="p-3.5 panel" style={{ borderColor: "var(--border)" }}>
-          <div className="hud-label text-[9px] mb-1" style={{ color: "var(--text-muted)" }}>CURRENT VELOCITY</div>
-          <div className="text-xl font-bold font-mono text-purple-400">
-            {displayVss} <span className="text-xs">{speedUnitStr}</span>
-          </div>
-          <div className="text-[9px] font-mono text-zinc-400 mt-1">
-            RPM: {telemetry.rpm.toLocaleString()}
+        <div className="p-4 rounded-2xl border border-[#1A263D] bg-[#0F1626]">
+          <div className="text-[11px] font-semibold text-slate-400">MANIFOLD MAP</div>
+          <div className="text-2xl font-bold font-mono text-purple-400 mt-1">
+            {telemetry.mapKpa ?? 101} <span className="text-xs text-slate-500">kPa</span>
           </div>
         </div>
-
-        <div className="p-3.5 panel" style={{ borderColor: "var(--border)" }}>
-          <div className="hud-label text-[9px] mb-1" style={{ color: "var(--text-muted)" }}>FLEET ODOMETER TRIP</div>
-          <div className="text-xl font-bold font-mono text-cyan-400">
-            {totalDistance.toFixed(1)} km
-          </div>
-          <div className="text-[9px] font-mono text-zinc-400 mt-1">
-            TIME: {formatDuration(tripTime)}
+        <div className="p-4 rounded-2xl border border-[#1A263D] bg-[#0F1626]">
+          <div className="text-[11px] font-semibold text-slate-400">FUEL ECONOMY</div>
+          <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
+            {fuelML?.mileage_kmpl ? fuelML.mileage_kmpl.toFixed(1) : "--"} <span className="text-xs text-slate-500">km/L</span>
           </div>
         </div>
       </div>
 
-      {/* ── HERO MONITORED VEHICLE CARD ── */}
-      <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4" style={{ borderColor: "var(--border)" }}>
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 flex items-center justify-center border border-cyan-500/40 bg-cyan-500/10 text-cyan-400">
-              <Car size={24} />
-            </div>
-            <div>
-              <div className="flex items-center gap-3">
-                <span className="hud-display text-xl font-bold text-white tracking-wide">
-                  {MONITORED_VEHICLE.name}
-                </span>
-                <span className="px-2 py-0.5 text-[10px] font-mono font-bold bg-green-500/15 border border-green-500/40 text-green-400 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                  <span>IN SERVICE • EN ROUTE</span>
-                </span>
-                <span className="px-2 py-0.5 text-[10px] font-mono border border-cyan-500/30 text-cyan-300 bg-cyan-500/5">
-                  ID: {MONITORED_VEHICLE.id}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-zinc-400 mt-1">
-                <span>PLATE: <strong className="text-white">{MONITORED_VEHICLE.plate}</strong></span>
-                <span>•</span>
-                <span>VIN: <span className="text-zinc-300">{MONITORED_VEHICLE.vin}</span></span>
-                <span>•</span>
-                <span>ASSIGNED OPERATOR: <strong className="text-cyan-300">{MONITORED_VEHICLE.driverName}</strong></span>
-              </div>
-            </div>
-          </div>
-
-          {/* Primary Action Button: Launch Cockpit */}
-          <button
-            onClick={onOpenVehicle}
-            className="px-5 py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs font-bold transition-all border border-cyan-500/50 hover:border-cyan-400 flex items-center gap-2.5 cursor-pointer shadow-[0_0_15px_rgba(0,212,255,0.25)]"
-          >
-            <Eye size={15} />
-            <span>OPEN VEHICLE TELEMETRY COCKPIT</span>
-            <ExternalLink size={14} />
-          </button>
-        </div>
-
-        {/* Live Telemetry Sensor Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div className="p-3 border border-white/5 bg-black/30">
-            <div className="hud-label text-[8px] text-zinc-500">ENGINE RPM</div>
-            <div className="text-lg font-bold font-mono text-cyan-400">{telemetry.rpm} <span className="text-xs text-zinc-500">rpm</span></div>
-            <div className="meter-track h-1 mt-1.5">
-              <div className="meter-fill bg-cyan-400" style={{ width: `${Math.min(100, (telemetry.rpm / 7000) * 100)}%` }} />
-            </div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/30">
-            <div className="hud-label text-[8px] text-zinc-500">VEHICLE VELOCITY</div>
-            <div className="text-lg font-bold font-mono text-purple-400">{displayVss} <span className="text-xs text-zinc-500">{speedUnitStr}</span></div>
-            <div className="meter-track h-1 mt-1.5">
-              <div className="meter-fill bg-purple-400" style={{ width: `${Math.min(100, (telemetry.vss / 220) * 100)}%` }} />
-            </div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/30">
-            <div className="hud-label text-[8px] text-zinc-500">COOLANT TEMP</div>
-            <div className="text-lg font-bold font-mono text-amber-400">{displayCoolant} <span className="text-xs text-zinc-500">{tempUnitStr}</span></div>
-            <div className="meter-track h-1 mt-1.5">
-              <div className="meter-fill bg-amber-400" style={{ width: `${Math.min(100, (telemetry.coolantTemp / 130) * 100)}%` }} />
-            </div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/30">
-            <div className="hud-label text-[8px] text-zinc-500">THROTTLE POSITION</div>
-            <div className="text-lg font-bold font-mono text-cyan-400">{telemetry.throttle}%</div>
-            <div className="meter-track h-1 mt-1.5">
-              <div className="meter-fill bg-cyan-400" style={{ width: `${telemetry.throttle}%` }} />
-            </div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/30">
-            <div className="hud-label text-[8px] text-zinc-500">FUEL CONSUMPTION</div>
-            <div className="text-lg font-bold font-mono text-green-400">
-              {mileageVal > 0 ? mileageVal.toFixed(1) : "--"} <span className="text-xs text-zinc-500">km/L</span>
-            </div>
-            <div className="text-[9px] font-mono text-zinc-500 mt-1">
-              FCR: {fuelML?.fcr_gs ? `${fuelML.fcr_gs.toFixed(2)} g/s` : "--"}
-            </div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/30">
-            <div className="hud-label text-[8px] text-zinc-500">MANIFOLD PRESSURE</div>
-            <div className="text-lg font-bold font-mono text-purple-400">{telemetry.mapKpa ?? 101} <span className="text-xs text-zinc-500">kPa</span></div>
-            <div className="text-[9px] font-mono text-zinc-500 mt-1">
-              MAF: {telemetry.maf} g/s
-            </div>
-          </div>
-        </div>
-
-        {/* Real-time telemetry sparklines */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
-          <div className="p-3 border border-white/5 bg-black/20">
-            <div className="flex items-center justify-between mb-2">
-              <span className="hud-label text-[10px] text-zinc-400">RPM & VELOCITY CORRELATION WAVEFORM</span>
-              <span className="text-[9px] font-mono text-cyan-400">LIVE BUFFER</span>
-            </div>
-            <MultiLineChart
-              data={history.map((h, i) => ({
-                t: i,
-                rpm: h.rpm / 70,
-                spd: isImperialSpeed ? Math.round(h.vss * 0.621371) : h.vss,
-              }))}
-              series={[
-                { key: "rpm", color: "var(--cyan)", label: "RPM÷70" },
-                { key: "spd", color: "var(--purple)", label: speedUnitStr },
-              ]}
-              height={90}
-              maxPoints={50}
-            />
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/20">
-            <div className="flex items-center justify-between mb-2">
-              <span className="hud-label text-[10px] text-zinc-400">INSTANTANEOUS FUEL EFFICIENCY & LOAD</span>
-              <span className="text-[9px] font-mono text-green-400">3-TIER PHYSICS</span>
-            </div>
-            <MultiLineChart
-              data={history.map((h, i) => ({
-                t: i,
-                mileage: h.ml?.fuel?.mileage_kmpl ?? 0,
-                load: h.engineLoad,
-              }))}
-              series={[
-                { key: "mileage", color: "var(--green)", label: "km/L" },
-                { key: "load", color: "var(--amber)", label: "Load %" },
-              ]}
-              height={90}
-              maxPoints={50}
-            />
-          </div>
-        </div>
-
-        {/* Live Location & Driving Style Bar */}
-        <div className="p-3 border border-white/10 bg-black/40 flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
-          <div className="flex items-center gap-2">
-            <MapPin size={15} className="text-cyan-400" />
-            <span className="text-zinc-400">CURRENT POSITION:</span>
-            <span className="text-zinc-200">
-              {telemetry.lat !== undefined ? `${telemetry.lat.toFixed(5)}° N, ${telemetry.lon?.toFixed(5)}° E` : "12.9134° N, 74.9018° E"}
-            </span>
-            <span className="text-zinc-500">|</span>
-            <span className="text-zinc-400">ELEVATION:</span>
-            <span className="text-amber-400">{telemetry.elevationM ? `${telemetry.elevationM.toFixed(1)} m` : "--"}</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Zap size={14} style={{ color: bColor }} />
-              <span className="text-zinc-400">XGBOOST CLASSIFIER:</span>
-              <span className="font-bold" style={{ color: bColor }}>{currentBehavior.toUpperCase()}</span>
-            </div>
-            <button
-              onClick={onOpenVehicle}
-              className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1 font-bold cursor-pointer"
-            >
-              <span>Inspect Cockpit</span>
-              <ChevronRight size={14} />
-            </button>
-          </div>
-        </div>
+      {/* Interactive Full Leaflet Map with the 4 Heatmap Modes & Traveled Path */}
+      <div className="h-[440px] rounded-2xl overflow-hidden border border-[#1A263D] bg-[#0F1626]">
+        <GPSMap
+          telemetry={telemetry}
+          speedUnit={telemetryState.speedUnit}
+          compact={false}
+          showTraveledPath={true}
+        />
       </div>
 
-      {/* ── Bottom Grid: AI Diagnostics & Fleet Watchlist ── */}
+      {/* Streaming Waveform Sparklines */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* LSTM Autoencoder Health Monitor */}
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            <div className="flex items-center gap-2">
-              <Shield size={16} style={{ color: "var(--cyan)" }} />
-              <span className="hud-display text-sm font-bold text-white">
-                LSTM AUTOENCODER VEHICLE HEALTH ANOMALY MONITOR
+        <div className="p-5 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-3">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+            <span>RPM & SPEED CORRELATION WAVEFORM</span>
+            <span className="text-cyan-400 font-mono">LIVE BUFFER</span>
+          </div>
+          <MultiLineChart
+            data={history.map((h, i) => ({
+              t: i,
+              rpm: h.rpm / 70,
+              spd: isImperialSpeed ? Math.round(h.vss * 0.621371) : h.vss,
+            }))}
+            series={[
+              { key: "rpm", color: "#00D4FF", label: "RPM÷70" },
+              { key: "spd", color: "#8B5CF6", label: speedUnitStr },
+            ]}
+            height={110}
+            maxPoints={60}
+          />
+        </div>
+
+        <div className="p-5 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-3">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+            <span>INSTANTANEOUS FUEL EFFICIENCY & LOAD</span>
+            <span className="text-emerald-400 font-mono">3-TIER PHYSICS</span>
+          </div>
+          <MultiLineChart
+            data={history.map((h, i) => ({
+              t: i,
+              mileage: h.ml?.fuel?.mileage_kmpl ?? 0,
+              load: h.engineLoad,
+            }))}
+            series={[
+              { key: "mileage", color: "#10B981", label: "km/L" },
+              { key: "load", color: "#F59E0B", label: "Load %" },
+            ]}
+            height={110}
+            maxPoints={60}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── 4. ANALYTICS & DRIVER AI VIEW ───────────────────────────────
+const AnalyticsScorecardView: React.FC<{
+  telemetryState: LiveTelemetryState;
+  onOpenVehicle: () => void;
+}> = ({ telemetryState, onOpenVehicle }) => {
+  const { currentBehavior, driverML, fuelML } = telemetryState;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* XGBoost Classifier Model Card */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Zap size={18} className="text-cyan-400" />
+              <h3 className="font-bold text-white text-base">Driver Behavior Classification</h3>
+            </div>
+            <span className="text-[10px] font-mono text-cyan-400 px-2 py-0.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
+              XGBOOST
+            </span>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[#090D17] border border-[#1A263D] flex items-center justify-between">
+            <div>
+              <div className="text-xs text-slate-400 font-medium">Current Evaluation</div>
+              <div className={`text-2xl font-bold mt-0.5 ${
+                currentBehavior === "Economical" ? "text-emerald-400" : currentBehavior === "Moderate" ? "text-amber-400" : "text-red-400"
+              }`}>
+                {currentBehavior}
+              </div>
+            </div>
+            <span className="text-xs font-mono text-slate-400">Sliding Window 60s</span>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <div className="text-slate-400 font-semibold mb-2">Class Confidence Distribution</div>
+            <div>
+              <div className="flex justify-between text-slate-300 mb-1">
+                <span>Economical</span>
+                <span className="font-mono text-emerald-400">
+                  {currentBehavior === "Economical" ? "88%" : "12%"}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full"
+                  style={{ width: currentBehavior === "Economical" ? "88%" : "12%" }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-300 mb-1">
+                <span>Moderate</span>
+                <span className="font-mono text-amber-400">
+                  {currentBehavior === "Moderate" ? "74%" : "22%"}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-amber-500 rounded-full"
+                  style={{ width: currentBehavior === "Moderate" ? "74%" : "22%" }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-slate-300 mb-1">
+                <span>Aggressive</span>
+                <span className="font-mono text-red-400">
+                  {currentBehavior === "Aggressive" ? "91%" : "4%"}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-red-500 rounded-full"
+                  style={{ width: currentBehavior === "Aggressive" ? "91%" : "4%" }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Feature Extraction Breakdown */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center gap-2.5">
+            <Activity size={18} className="text-cyan-400" />
+            <h3 className="font-bold text-white text-base">Sliding-Window Feature Extraction</h3>
+          </div>
+
+          <div className="space-y-3 font-mono text-xs">
+            <div className="p-3 rounded-xl bg-[#090D17] border border-[#1A263D] flex justify-between">
+              <span className="text-slate-400">Mean Engine RPM:</span>
+              <span className="text-cyan-400 font-bold">{driverML?.mean_rpm ? Math.round(driverML.mean_rpm) : "1,420"} rpm</span>
+            </div>
+            <div className="p-3 rounded-xl bg-[#090D17] border border-[#1A263D] flex justify-between">
+              <span className="text-slate-400">RPM Standard Deviation:</span>
+              <span className="text-slate-200">{driverML?.std_rpm ? driverML.std_rpm.toFixed(1) : "210.4"}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-[#090D17] border border-[#1A263D] flex justify-between">
+              <span className="text-slate-400">Pedal / Throttle Variance:</span>
+              <span className="text-slate-200">{driverML?.std_pedal ? driverML.std_pedal.toFixed(2) : "4.12"}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-[#090D17] border border-[#1A263D] flex justify-between">
+              <span className="text-slate-400">Speed Deviation (km/h):</span>
+              <span className="text-slate-200">{driverML?.speed_deviation ? driverML.speed_deviation.toFixed(1) : "3.8"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3-Tier Fuel Model Card */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center gap-2.5">
+            <Fuel size={18} className="text-cyan-400" />
+            <h3 className="font-bold text-white text-base">Physics-Based Fuel Model</h3>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[#090D17] border border-[#1A263D]">
+            <div className="text-xs text-slate-400">Tier Selected by Sensor Availability</div>
+            <div className="text-lg font-bold text-emerald-400 mt-1">
+              Tier {fuelML?.tier ?? 1}: {fuelML?.method ?? "Direct Mass Air Flow (MAF)"}
+            </div>
+          </div>
+
+          <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+            <p>
+              Calculates instant stoichiometric fuel burn using chemical air-fuel ratio (<strong className="text-cyan-400">AFR 14.7</strong> for E10 gasoline) and density of 740 g/L.
+            </p>
+            <p className="text-slate-400">
+              Fallback tiers utilize Speed-Density manifold absolute pressure (MAP) or engine load telemetry if MAF sensor drops offline.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── 5. REPORTS & MAINTENANCE VIEW ───────────────────────────────
+const ReportsMaintenanceView: React.FC<{
+  telemetryState: LiveTelemetryState;
+  onOpenVehicle: () => void;
+}> = ({ telemetryState, onOpenVehicle }) => {
+  const { serviceCompany, registeredIssues, healthStatus, telemetry } = telemetryState;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Service Partner Details */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center gap-2.5">
+            <Wrench size={18} className="text-cyan-400" />
+            <h3 className="font-bold text-white text-base">Authorized Service Partner</h3>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[#090D17] border border-[#1A263D] space-y-2">
+            <div className="font-bold text-white text-sm">{serviceCompany.name}</div>
+            <div className="text-xs text-slate-400">{serviceCompany.address}</div>
+            <div className="text-xs text-cyan-400 font-mono">{serviceCompany.phone}</div>
+            <div className="text-xs text-slate-400 font-mono">{serviceCompany.email}</div>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Fleet maintenance dispatch partner assigned for automated service work orders and OBD-II trouble code resolution.
+          </p>
+        </div>
+
+        {/* Predictive Health Integrity */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center gap-2.5">
+            <Shield size={18} className="text-cyan-400" />
+            <h3 className="font-bold text-white text-base">Vehicle Health Integrity</h3>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[#090D17] border border-[#1A263D] flex items-center justify-between">
+            <div>
+              <div className="text-xs text-slate-400">LSTM Autoencoder Score</div>
+              <div className="text-3xl font-extrabold text-emerald-400 mt-1 font-mono">
+                {healthStatus.score}%
+              </div>
+            </div>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              {healthStatus.status}
+            </span>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <div className="flex justify-between text-slate-300">
+              <span>Active Trouble Codes:</span>
+              <span className={telemetry.dtcs.length > 0 ? "text-red-400 font-bold" : "text-emerald-400"}>
+                {telemetry.dtcs.length === 0 ? "None (Clear)" : telemetry.dtcs.join(", ")}
               </span>
             </div>
-            <span className="text-[10px] font-mono text-purple-400">PYTORCH INFERENCE</span>
-          </div>
-
-          <div className="flex items-center gap-4 p-3 border border-white/5 bg-black/20">
-            <div className="hud-display text-4xl font-bold" style={{ color: healthStatus.status === "Healthy" ? "var(--green)" : "var(--red)" }}>
-              {healthStatus.score}%
-            </div>
-            <div className="flex-1 font-mono text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-zinc-500">STATUS:</span>
-                <span className="font-bold" style={{ color: healthStatus.status === "Healthy" ? "var(--green)" : "var(--red)" }}>
-                  {healthStatus.isAnomaly ? "ANOMALY DETECTED" : "NOMINAL OPERATION"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">ANOMALY RECONSTRUCTION SCORE:</span>
-                <span className="text-zinc-300">{healthStatus.anomalyScore > 0 ? healthStatus.anomalyScore.toFixed(5) : "0.000012"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">TRIGGERED SENSORS:</span>
-                <span className={healthStatus.triggeredFeatures.length > 0 ? "text-red-400 font-bold" : "text-green-400"}>
-                  {healthStatus.triggeredFeatures.length > 0 ? healthStatus.triggeredFeatures.join(", ") : "None (All Nominal)"}
-                </span>
-              </div>
+            <div className="flex justify-between text-slate-300">
+              <span>Coolant Temperature:</span>
+              <span className="text-slate-200 font-mono">{telemetry.coolantTemp}°C</span>
             </div>
           </div>
+        </div>
 
-          {telemetry.dtcs.length > 0 ? (
-            <div className="space-y-2">
-              <div className="text-[10px] font-mono text-red-400 uppercase font-bold flex items-center gap-1.5">
-                <AlertTriangle size={12} />
-                <span>ACTIVE DTC FAULT CODES DETECTED ON FLEET UNIT</span>
+        {/* Scheduled Maintenance Checklist */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center gap-2.5">
+            <FileText size={18} className="text-cyan-400" />
+            <h3 className="font-bold text-white text-base">Maintenance Checklist</h3>
+          </div>
+
+          <div className="space-y-2.5 text-xs">
+            {[
+              { item: "Synthetic Engine Oil & Filter (5W-30)", due: "In 3,400 km", status: "Nominal" },
+              { item: "Brake Pad Wear Sensor Inspection", due: "In 6,200 km", status: "Nominal" },
+              { item: "Spark Plug Gap (FSI Direct)", due: "In 12,000 km", status: "Nominal" },
+              { item: "Transmission Fluid Check", due: "In 18,000 km", status: "Scheduled" },
+            ].map((entry, idx) => (
+              <div key={idx} className="p-2.5 rounded-xl bg-[#090D17] border border-[#1A263D] flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-slate-200">{entry.item}</div>
+                  <div className="text-[10px] text-slate-500">{entry.due}</div>
+                </div>
+                <span className="text-[10px] font-semibold text-emerald-400 px-2 py-0.5 rounded-md bg-emerald-500/10">
+                  {entry.status}
+                </span>
               </div>
-              {telemetry.dtcs.map((code) => (
-                <div key={code} className="p-2.5 border border-red-500/40 bg-red-500/10 font-mono text-xs flex justify-between items-center">
-                  <span className="font-bold text-red-300">{code}</span>
-                  <span className="text-[10px] text-zinc-400">
-                    {code === "P0300" ? "Misfire Detected" : code === "P0171" ? "System Lean" : "Diagnostic Trouble Code"}
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── 6. ALERTS & DIAGNOSTICS VIEW ────────────────────────────────
+const AlertsDiagnosticsView: React.FC<{
+  telemetryState: LiveTelemetryState;
+  onOpenVehicle: () => void;
+}> = ({ telemetryState, onOpenVehicle }) => {
+  const { telemetry, healthStatus } = telemetryState;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Active Trouble Codes (DTC) Card */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle size={18} className="text-amber-400" />
+              <h3 className="font-bold text-white text-base">OBD-II Diagnostic Trouble Codes</h3>
+            </div>
+            <span className="text-xs font-mono px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              ECU PID 0x03
+            </span>
+          </div>
+
+          {telemetry.dtcs.length === 0 ? (
+            <div className="p-6 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
+              <CheckCircle size={28} className="text-emerald-400 mx-auto" />
+              <div className="text-sm font-bold text-white">No Diagnostic Trouble Codes</div>
+              <p className="text-xs text-slate-400">
+                All 9 monitored ECU powertrain and emissions sensors are reporting nominal parameters without pending fault codes.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {telemetry.dtcs.map((dtc) => (
+                <div key={dtc} className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-white font-mono text-base">{dtc}</div>
+                    <div className="text-xs text-red-300">ECU Emission / Powertrain Alert Code</div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-500 text-white">
+                    Action Required
                   </span>
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="p-3 border border-dashed border-white/10 text-center font-mono text-xs text-zinc-500">
-              No active Diagnostic Trouble Codes (DTC) detected.
-            </div>
           )}
         </div>
 
-        {/* Assigned Driver Profile & TTS Advisory */}
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            <div className="flex items-center gap-2">
-              <User size={16} style={{ color: "var(--purple)" }} />
-              <span className="hud-display text-sm font-bold text-white">
-                ASSIGNED OPERATOR PERFORMANCE & SAFETY ADVISORY
-              </span>
-            </div>
-            <span className="text-[10px] font-mono text-zinc-400">OPERATOR ID: {MONITORED_VEHICLE.driverId}</span>
+        {/* Telegram Dispatch Gateway Card */}
+        <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-4">
+          <div className="flex items-center gap-2.5">
+            <Send size={18} className="text-cyan-400" />
+            <h3 className="font-bold text-white text-base">Automated Telegram Dispatch</h3>
           </div>
 
-          <div className="p-3 border border-white/5 bg-black/20 flex items-center justify-between">
+          <div className="space-y-3 text-xs">
             <div>
-              <div className="text-sm font-bold text-white">{MONITORED_VEHICLE.driverName}</div>
-              <div className="text-[10px] font-mono text-zinc-500">LICENSE: {MONITORED_VEHICLE.driverLicense}</div>
+              <label className="text-slate-400 font-semibold block mb-1">Telegram Bot Token</label>
+              <input
+                type="password"
+                value={telemetryState.telegramToken}
+                onChange={(e) => telemetryState.setTelegramToken(e.target.value)}
+                placeholder="e.g. 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ"
+                className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-white font-mono text-xs focus:outline-none focus:border-cyan-400"
+              />
             </div>
-            <div className="text-right">
-              <div className="hud-label text-[9px] text-zinc-500">DRIVE STYLE</div>
-              <div className="text-sm font-bold font-mono" style={{ color: bColor }}>{currentBehavior.toUpperCase()}</div>
+            <div>
+              <label className="text-slate-400 font-semibold block mb-1">Chat ID / Channel</label>
+              <input
+                type="text"
+                value={telemetryState.telegramChatId}
+                onChange={(e) => telemetryState.setTelegramChatId(e.target.value)}
+                placeholder="e.g. -100123456789"
+                className="w-full px-3 py-2 bg-[#090D17] border border-[#1A263D] rounded-xl text-white font-mono text-xs focus:outline-none focus:border-cyan-400"
+              />
             </div>
-          </div>
-
-          {/* Real-time TTS Advisory Note */}
-          <div className="p-3.5 border border-purple-500/30 bg-purple-500/5 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-mono text-purple-400 font-bold">
-              <Volume2 size={15} />
-              <span>AI TELEMATICS DRIVER ADVISORY (XGBOOST MODEL OUTPUT)</span>
+            <div className="flex items-center gap-2 pt-2">
+              <input
+                type="checkbox"
+                id="tgEnable"
+                checked={telemetryState.telegramEnabled}
+                onChange={(e) => telemetryState.setTelegramEnabled(e.target.checked)}
+                className="accent-cyan-400"
+              />
+              <label htmlFor="tgEnable" className="text-slate-300 font-semibold cursor-pointer">
+                Enable automated alerts for DTC codes & high coolant temp
+              </label>
             </div>
-            <p className="text-xs text-zinc-300 leading-relaxed italic">
-              "{driverML?.tts_message || "Smooth driving maintained. Vehicle operating within standard velocity and RPM corridors."}"
-            </p>
-            {driverML?.confidence && (
-              <div className="text-[10px] font-mono text-zinc-500 text-right">
-                MODEL CONFIDENCE: {(driverML.confidence * 100).toFixed(1)}%
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -740,422 +1730,12 @@ const FleetOverviewTab: React.FC<FleetSubtabProps> = ({
   );
 };
 
-// ─── 2. VEHICLES REGISTRY TAB ─────────────────────────────────
-const FleetVehiclesTab: React.FC<{
+// ─── 7. SETTINGS VIEW ────────────────────────────────────────────
+const SettingsGatewayView: React.FC<{
   telemetryState: LiveTelemetryState;
-  onOpenVehicle: () => void;
-  speedUnitStr: string;
-  tempUnitStr: string;
-  displayVss: number;
-  displayCoolant: number;
-}> = ({
-  telemetryState,
-  onOpenVehicle,
-  speedUnitStr,
-  tempUnitStr,
-  displayVss,
-  displayCoolant,
-}) => {
-  const { telemetry, totalDistance, healthStatus, currentBehavior, fuelML } = telemetryState;
-
-  return (
-    <div className="h-full overflow-y-auto scroll-area p-6 space-y-6" style={{ background: "var(--bg-deep)" }}>
-      <div>
-        <div className="hud-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>
-          FLEET ASSETS & REGISTERED VEHICLES
-        </div>
-        <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
-          MONITOR COMMERCIAL FLEET HARDWARE, ECU CAN-BUS PROTOCOLS, AND LIVE STATUS
-        </div>
-      </div>
-
-      {/* Fleet Vehicles Table */}
-      <div className="panel overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-        <div className="p-4 border-b flex justify-between items-center" style={{ borderColor: "var(--border)" }}>
-          <div className="hud-label text-xs font-bold text-cyan-400">
-            ACTIVE FLEET ROSTER (1 REGISTERED TELEMATICS NODE)
-          </div>
-          <span className="text-xs font-mono text-zinc-500">FILTER: ALL VEHICLES</span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left font-mono text-xs">
-            <thead className="bg-black/40 text-zinc-400 border-b" style={{ borderColor: "var(--border)" }}>
-              <tr>
-                <th className="p-3.5">UNIT ID / MODEL</th>
-                <th className="p-3.5">REGISTRATION & VIN</th>
-                <th className="p-3.5">OPERATOR</th>
-                <th className="p-3.5">LIVE VELOCITY</th>
-                <th className="p-3.5">HEALTH SCORE</th>
-                <th className="p-3.5">DRIVE STYLE</th>
-                <th className="p-3.5">DTC STATUS</th>
-                <th className="p-3.5 text-right">ACTION</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5 text-zinc-300">
-              <tr className="hover:bg-cyan-500/5 transition-colors">
-                <td className="p-3.5">
-                  <div className="font-bold text-white flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                    <span>{MONITORED_VEHICLE.name}</span>
-                  </div>
-                  <div className="text-[10px] text-cyan-400">{MONITORED_VEHICLE.id}</div>
-                </td>
-
-                <td className="p-3.5">
-                  <div className="text-white font-bold">{MONITORED_VEHICLE.plate}</div>
-                  <div className="text-[10px] text-zinc-500">{MONITORED_VEHICLE.vin}</div>
-                </td>
-
-                <td className="p-3.5">
-                  <div className="text-zinc-200">{MONITORED_VEHICLE.driverName}</div>
-                  <div className="text-[10px] text-zinc-500">{MONITORED_VEHICLE.driverId}</div>
-                </td>
-
-                <td className="p-3.5">
-                  <span className="text-purple-400 font-bold">{displayVss} {speedUnitStr}</span>
-                  <div className="text-[10px] text-zinc-500">{telemetry.rpm} RPM</div>
-                </td>
-
-                <td className="p-3.5">
-                  <span className={`font-bold ${healthStatus.status === "Healthy" ? "text-green-400" : "text-red-400"}`}>
-                    {healthStatus.score}% {healthStatus.status}
-                  </span>
-                </td>
-
-                <td className="p-3.5">
-                  <span className="px-1.5 py-0.5 border border-cyan-500/30 text-cyan-300 text-[10px]">
-                    {currentBehavior}
-                  </span>
-                </td>
-
-                <td className="p-3.5">
-                  {telemetry.dtcs.length > 0 ? (
-                    <span className="text-red-400 font-bold">{telemetry.dtcs.length} FAULTS</span>
-                  ) : (
-                    <span className="text-green-400">NOMINAL</span>
-                  )}
-                </td>
-
-                <td className="p-3.5 text-right">
-                  <button
-                    onClick={onOpenVehicle}
-                    className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 font-bold text-xs cursor-pointer inline-flex items-center gap-1.5 transition-all"
-                  >
-                    <span>Inspect Cockpit</span>
-                    <ArrowRight size={12} />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Deep-Dive Specifications Card */}
-      <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-        <div className="hud-label text-xs font-bold text-white border-b pb-3" style={{ borderColor: "var(--border)" }}>
-          HARDWARE & PROTOCOL CONFIGURATION — {MONITORED_VEHICLE.id}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 font-mono text-xs">
-          <div className="p-3 border border-white/5 bg-black/20">
-            <div className="hud-label text-[9px] text-zinc-500">ENGINE SPECIFICATION</div>
-            <div className="text-zinc-200 font-bold mt-1">{MONITORED_VEHICLE.engineSpec}</div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/20">
-            <div className="hud-label text-[9px] text-zinc-500">FUEL & STOICHIOMETRIC MIX</div>
-            <div className="text-zinc-200 font-bold mt-1">{MONITORED_VEHICLE.fuelType}</div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/20">
-            <div className="hud-label text-[9px] text-zinc-500">DIAGNOSTIC PROTOCOL</div>
-            <div className="text-zinc-200 font-bold mt-1">{MONITORED_VEHICLE.protocol}</div>
-          </div>
-
-          <div className="p-3 border border-white/5 bg-black/20">
-            <div className="hud-label text-[9px] text-zinc-500">FIRMWARE BUILD</div>
-            <div className="text-zinc-200 font-bold mt-1">{MONITORED_VEHICLE.ecuFirmware}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ─── 3. DRIVER PERFORMANCE TAB ────────────────────────────────
-const FleetDriverScorecardTab: React.FC<{
-  telemetryState: LiveTelemetryState;
-  onOpenVehicle: () => void;
-}> = ({ telemetryState, onOpenVehicle }) => {
-  const { telemetry, currentBehavior, driverML } = telemetryState;
-  const features = driverML?.feature_values || {};
-
-  const bColor =
-    currentBehavior === "Economical"
-      ? "var(--green)"
-      : currentBehavior === "Moderate"
-      ? "var(--amber)"
-      : "var(--red)";
-
-  return (
-    <div className="h-full overflow-y-auto scroll-area p-6 space-y-6" style={{ background: "var(--bg-deep)" }}>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <div className="hud-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>
-            DRIVER TELEMETRY & AI PERFORMANCE SCORECARD
-          </div>
-          <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
-            EVALUATING SMOOTHNESS, ACCELERATION VARIANCES, AND FUEL CONSERVATION VIA XGBOOST
-          </div>
-        </div>
-
-        <button
-          onClick={onOpenVehicle}
-          className="px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs font-bold transition-all border border-cyan-500/40 flex items-center gap-2 cursor-pointer"
-        >
-          <span>Open Cockpit HUD</span>
-          <ArrowRight size={13} />
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="hud-label text-xs font-bold text-white border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            OPERATOR IDENTIFIER
-          </div>
-          <div className="space-y-3 font-mono text-xs">
-            <div>
-              <span className="text-[10px] text-zinc-500 block">FULL NAME:</span>
-              <span className="text-base font-bold text-white">{MONITORED_VEHICLE.driverName}</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-zinc-500 block">ASSIGNED VEHICLE:</span>
-              <span className="text-cyan-400 font-bold">{MONITORED_VEHICLE.name} ({MONITORED_VEHICLE.plate})</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-zinc-500 block">CURRENT STYLE:</span>
-              <span className="text-lg font-bold" style={{ color: bColor }}>{currentBehavior.toUpperCase()}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="lg:col-span-2 panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            <div className="hud-label text-xs font-bold text-white">
-              XGBOOST ENGINEERED FEATURE METRICS (9 MODEL PARAMETERS)
-            </div>
-            <span className="text-[10px] font-mono text-purple-400">DriverBehavior_XGBoost_012</span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono text-xs">
-            <div className="p-3 border border-white/5 bg-black/20">
-              <div className="text-[9px] text-zinc-500">AVERAGE SPEED</div>
-              <div className="text-base font-bold text-cyan-400 mt-1">
-                {features.avg_speed !== undefined ? `${features.avg_speed.toFixed(1)} km/h` : `${telemetry.vss} km/h`}
-              </div>
-            </div>
-
-            <div className="p-3 border border-white/5 bg-black/20">
-              <div className="text-[9px] text-zinc-500">MEAN ENGINE RPM</div>
-              <div className="text-base font-bold text-cyan-400 mt-1">
-                {features.mean_rpm !== undefined ? `${features.mean_rpm.toFixed(0)} rpm` : `${telemetry.rpm} rpm`}
-              </div>
-            </div>
-
-            <div className="p-3 border border-white/5 bg-black/20">
-              <div className="text-[9px] text-zinc-500">RPM STD DEVIATION</div>
-              <div className="text-base font-bold text-purple-400 mt-1">
-                {features.rpm_std !== undefined ? features.rpm_std.toFixed(2) : "12.4"}
-              </div>
-            </div>
-
-            <div className="p-3 border border-white/5 bg-black/20">
-              <div className="text-[9px] text-zinc-500">PEDAL POSITION STD</div>
-              <div className="text-base font-bold text-amber-400 mt-1">
-                {features.pedal_std !== undefined ? features.pedal_std.toFixed(2) : "4.8"}
-              </div>
-            </div>
-
-            <div className="p-3 border border-white/5 bg-black/20">
-              <div className="text-[9px] text-zinc-500">ACCELERATION STD</div>
-              <div className="text-base font-bold text-purple-400 mt-1">
-                {features.accel_std !== undefined ? features.accel_std.toFixed(3) : "0.14"}
-              </div>
-            </div>
-
-            <div className="p-3 border border-white/5 bg-black/20">
-              <div className="text-[9px] text-zinc-500">SPEED VARIATION (DEV)</div>
-              <div className="text-base font-bold text-cyan-400 mt-1">
-                {features.vs_dev !== undefined ? features.vs_dev.toFixed(2) : "6.2"}
-              </div>
-            </div>
-          </div>
-
-          {/* Model feedback sentence */}
-          {driverML?.tts_message && (
-            <div className="p-3.5 border border-purple-500/30 bg-purple-500/10 text-xs font-mono text-zinc-200 flex items-start gap-2.5">
-              <Volume2 size={16} className="text-purple-400 shrink-0 mt-0.5" />
-              <div>
-                <span className="text-[10px] text-purple-400 block font-bold mb-0.5">SYNTHESIZED TTS ADVISORY:</span>
-                <span>"{driverML.tts_message}"</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ─── 4. MAINTENANCE TAB ───────────────────────────────────────
-const FleetMaintenanceTab: React.FC<{
-  telemetryState: LiveTelemetryState;
-  onOpenVehicle: () => void;
-}> = ({ telemetryState, onOpenVehicle }) => {
-  const {
-    telemetry,
-    serviceCompany,
-    registeredIssues,
-    telegramToken,
-    telegramChatId,
-    telegramEnabled,
-  } = telemetryState;
-
-  return (
-    <div className="h-full overflow-y-auto scroll-area p-6 space-y-6" style={{ background: "var(--bg-deep)" }}>
-      <div>
-        <div className="hud-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>
-          FLEET MAINTENANCE & SERVICE DISPATCH LOGS
-        </div>
-        <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
-          TRACK DIAGNOSTIC TROUBLE CODES, SCHEDULE WORKSHOPS, AND NOTIFY FLEET TEAMS
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 space-y-5">
-          {/* Active DTCs Card */}
-          <div className="panel p-5 space-y-3" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-            <div className="hud-label text-xs font-bold text-white border-b pb-3 flex justify-between" style={{ borderColor: "var(--border)" }}>
-              <span>ACTIVE FLEET DIAGNOSTIC TROUBLE CODES</span>
-              <span className="text-red-400 font-mono">{telemetry.dtcs.length} ACTIVE</span>
-            </div>
-
-            {telemetry.dtcs.length === 0 ? (
-              <div className="p-6 text-center border border-dashed border-white/10 text-xs font-mono text-zinc-500">
-                All systems nominal. No active diagnostic fault codes detected in vehicle ECU.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {telemetry.dtcs.map((code) => (
-                  <div key={code} className="p-3 border border-red-500/40 bg-red-500/10 font-mono text-xs flex justify-between items-center">
-                    <div>
-                      <div className="font-bold text-red-300">{code}</div>
-                      <div className="text-[10px] text-zinc-400 mt-0.5">
-                        {code === "P0300"
-                          ? "Random/Multiple Cylinder Misfire Detected"
-                          : code === "P0171"
-                          ? "Air-Fuel Ratio System Too Lean (Bank 1)"
-                          : code === "P0420"
-                          ? "Catalyst Efficiency Below Threshold"
-                          : "Active Fault Code"}
-                      </div>
-                    </div>
-                    <span className="px-2 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 text-[10px]">
-                      HIGH PRIORITY
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Service Tickets Log */}
-          <div className="panel p-5 space-y-3" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-            <div className="hud-label text-xs font-bold text-white border-b pb-3 flex justify-between" style={{ borderColor: "var(--border)" }}>
-              <span>DISPATCHED SERVICE TICKETS</span>
-              <span className="text-cyan-400 font-mono">{registeredIssues.length} LOGGED</span>
-            </div>
-
-            {registeredIssues.length === 0 ? (
-              <div className="p-6 text-center border border-dashed border-white/10 text-xs font-mono text-zinc-500">
-                No open maintenance tickets. Create tickets from the Vehicle Telemetry Cockpit.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {registeredIssues.map((issue) => (
-                  <div key={issue.id} className="p-3 border border-white/10 bg-black/30 font-mono text-xs space-y-1">
-                    <div className="flex justify-between">
-                      <span className="font-bold text-cyan-400">{issue.id}</span>
-                      <span className="text-[10px] text-zinc-400">{new Date(issue.date).toLocaleDateString()}</span>
-                    </div>
-                    <div className="text-zinc-200">{issue.description}</div>
-                    <div className="flex gap-2 text-[10px] text-zinc-500 pt-1">
-                      <span>Assigned: {issue.companyDetails.name}</span>
-                      <span>•</span>
-                      <span className="uppercase text-amber-400">{issue.urgency} Priority</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Assigned Service Provider & Telegram Status */}
-        <div className="space-y-5">
-          <div className="panel p-5 space-y-3 font-mono text-xs" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-            <div className="hud-label text-xs font-bold text-white border-b pb-3" style={{ borderColor: "var(--border)" }}>
-              ASSIGNED WORKSHOP PARTNER
-            </div>
-            <div>
-              <div className="text-[9px] text-zinc-500">WORKSHOP / MECHANIC NAME</div>
-              <div className="text-cyan-400 font-bold text-sm mt-0.5">{serviceCompany.name}</div>
-            </div>
-            <div>
-              <div className="text-[9px] text-zinc-500">CONTACT PHONE</div>
-              <div className="text-zinc-300 mt-0.5">{serviceCompany.phone || "Not set"}</div>
-            </div>
-            <div>
-              <div className="text-[9px] text-zinc-500">SUPPORT EMAIL</div>
-              <div className="text-zinc-300 mt-0.5">{serviceCompany.email || "Not set"}</div>
-            </div>
-            <div>
-              <div className="text-[9px] text-zinc-500">FACILITY ADDRESS</div>
-              <div className="text-zinc-300 mt-0.5">{serviceCompany.address || "Not set"}</div>
-            </div>
-          </div>
-
-          <div className="panel p-5 space-y-3 font-mono text-xs" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-            <div className="hud-label text-xs font-bold text-white border-b pb-3 flex justify-between" style={{ borderColor: "var(--border)" }}>
-              <span>TELEGRAM ALERT DISPATCH</span>
-              <span className={telegramEnabled ? "text-green-400" : "text-zinc-500"}>
-                {telegramEnabled ? "ACTIVE" : "MUTED"}
-              </span>
-            </div>
-            {telegramEnabled ? (
-              <div>
-                <span className="text-[9px] text-zinc-500 block">TARGET CHAT ID:</span>
-                <span className="text-zinc-200">{telegramChatId || "Empty"}</span>
-              </div>
-            ) : (
-              <p className="text-[11px] text-zinc-400 leading-relaxed font-sans">
-                Telegram alert gateway is currently disabled. Configure Bot Token in Fleet Settings to dispatch mobile fault alerts.
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ─── 5. SETTINGS TAB ──────────────────────────────────────────
-const FleetSettingsTab: React.FC<{
-  telemetryState: LiveTelemetryState;
-}> = ({ telemetryState }) => {
+  theme: "dark" | "light";
+  setTheme: (t: "dark" | "light") => void;
+}> = ({ telemetryState, theme, setTheme }) => {
   const {
     speedUnit,
     setSpeedUnit,
@@ -1165,146 +1745,104 @@ const FleetSettingsTab: React.FC<{
     setTempUrl,
     handleSaveUrl,
     resetStates,
-    isBackendHealthy,
-    isConnected,
   } = telemetryState;
 
-  const [savedMsg, setSavedMsg] = useState(false);
-
-  const onSave = () => {
-    handleSaveUrl();
-    setSavedMsg(true);
-    setTimeout(() => setSavedMsg(false), 3000);
-  };
-
   return (
-    <div className="h-full overflow-y-auto scroll-area p-6 space-y-6" style={{ background: "var(--bg-deep)" }}>
-      <div>
-        <div className="hud-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>
-          ENTERPRISE FLEET GATEWAY & TELEMATICS SETTINGS
+    <div className="space-y-6 max-w-3xl">
+      <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-5">
+        <div>
+          <h3 className="font-bold text-white text-base">FastAPI Reverse Proxy Gateway URL</h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Configure the backend telemetry ingestion server or Pinggy tunnel endpoint.
+          </p>
         </div>
-        <div className="hud-label text-[10px]" style={{ color: "var(--text-muted)" }}>
-          CONFIGURE REVERSE PROXY TARGETS, UNITS OF MEASURE, AND TRIP BUFFERS
+
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={tempUrl}
+            onChange={(e) => setTempUrl(e.target.value)}
+            placeholder="http://localhost:8000"
+            className="flex-1 px-4 py-2.5 bg-[#090D17] border border-[#1A263D] rounded-xl text-white text-xs font-mono focus:outline-none focus:border-cyan-400"
+          />
+          <button
+            onClick={handleSaveUrl}
+            className="px-5 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold rounded-xl cursor-pointer shadow-[0_0_15px_rgba(0,212,255,0.2)]"
+          >
+            Save Gateway
+          </button>
         </div>
       </div>
 
-      <div className="max-w-4xl space-y-6">
-        {/* Backend Target URL */}
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="hud-label text-xs font-bold text-white border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            FASTAPI REVERSE PROXY GATEWAY TARGET
-          </div>
+      <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] space-y-5">
+        <h3 className="font-bold text-white text-base">Units of Measurement</h3>
 
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={tempUrl}
-              onChange={(e) => setTempUrl(e.target.value)}
-              placeholder="e.g. https://ecu-backend-95fz.onrender.com or http://localhost:8000"
-              className="flex-1 bg-black/40 text-xs px-3 py-2 outline-none font-mono"
-              style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }}
-            />
-            <button
-              onClick={onSave}
-              className="px-4 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 text-xs font-bold transition-all border border-cyan-500/40 cursor-pointer"
-            >
-              SAVE TARGET
-            </button>
-          </div>
-
-          {savedMsg && (
-            <div className="text-xs text-green-400 font-mono">
-              ✓ Gateway target updated successfully!
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3 font-mono text-xs pt-2">
-            <div className="p-3 border border-white/5 bg-black/20 flex justify-between">
-              <span className="text-zinc-500">BACKEND HEALTH:</span>
-              <span className={isBackendHealthy ? "text-green-400 font-bold" : "text-red-400 font-bold"}>
-                {isBackendHealthy ? "ONLINE (200 OK)" : "OFFLINE"}
-              </span>
-            </div>
-
-            <div className="p-3 border border-white/5 bg-black/20 flex justify-between">
-              <span className="text-zinc-500">WEBSOCKET CHANNEL:</span>
-              <span className={isConnected ? "text-cyan-400 font-bold" : "text-amber-400 font-bold"}>
-                {isConnected ? "ACTIVE / STREAMING" : "CONNECTING"}
-              </span>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs text-slate-400 font-semibold block mb-2">Speed Unit</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSpeedUnit("metric")}
+                className={`flex-1 py-2 text-xs font-semibold rounded-xl cursor-pointer ${
+                  speedUnit === "metric"
+                    ? "bg-cyan-400 text-slate-950"
+                    : "bg-[#090D17] text-slate-400 border border-[#1A263D]"
+                }`}
+              >
+                km/h (Metric)
+              </button>
+              <button
+                onClick={() => setSpeedUnit("imperial")}
+                className={`flex-1 py-2 text-xs font-semibold rounded-xl cursor-pointer ${
+                  speedUnit === "imperial"
+                    ? "bg-cyan-400 text-slate-950"
+                    : "bg-[#090D17] text-slate-400 border border-[#1A263D]"
+                }`}
+              >
+                mph (Imperial)
+              </button>
             </div>
           </div>
-        </div>
 
-        {/* Display Units */}
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="hud-label text-xs font-bold text-white border-b pb-3" style={{ borderColor: "var(--border)" }}>
-            FLEET MEASUREMENT UNITS
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <span className="hud-label text-[10px] text-zinc-500 block">SPEED UNITS</span>
-              <div className="flex border" style={{ borderColor: "var(--border)" }}>
-                <button
-                  onClick={() => setSpeedUnit("metric")}
-                  className={`flex-1 py-1.5 text-xs font-bold cursor-pointer ${
-                    speedUnit === "metric" ? "bg-cyan-500/20 text-cyan-300" : "text-zinc-500"
-                  }`}
-                >
-                  METRIC (KM/H)
-                </button>
-                <button
-                  onClick={() => setSpeedUnit("imperial")}
-                  className={`flex-1 py-1.5 text-xs font-bold cursor-pointer ${
-                    speedUnit === "imperial" ? "bg-cyan-500/20 text-cyan-300" : "text-zinc-500"
-                  }`}
-                >
-                  IMPERIAL (MPH)
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <span className="hud-label text-[10px] text-zinc-500 block">TEMPERATURE UNITS</span>
-              <div className="flex border" style={{ borderColor: "var(--border)" }}>
-                <button
-                  onClick={() => setTempUnit("metric")}
-                  className={`flex-1 py-1.5 text-xs font-bold cursor-pointer ${
-                    tempUnit === "metric" ? "bg-amber-500/20 text-amber-300" : "text-zinc-500"
-                  }`}
-                >
-                  CELSIUS (°C)
-                </button>
-                <button
-                  onClick={() => setTempUnit("imperial")}
-                  className={`flex-1 py-1.5 text-xs font-bold cursor-pointer ${
-                    tempUnit === "imperial" ? "bg-amber-500/20 text-amber-300" : "text-zinc-500"
-                  }`}
-                >
-                  FAHRENHEIT (°F)
-                </button>
-              </div>
+          <div>
+            <label className="text-xs text-slate-400 font-semibold block mb-2">Temperature Unit</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setTempUnit("metric")}
+                className={`flex-1 py-2 text-xs font-semibold rounded-xl cursor-pointer ${
+                  tempUnit === "metric"
+                    ? "bg-cyan-400 text-slate-950"
+                    : "bg-[#090D17] text-slate-400 border border-[#1A263D]"
+                }`}
+              >
+                °C (Celsius)
+              </button>
+              <button
+                onClick={() => setTempUnit("imperial")}
+                className={`flex-1 py-2 text-xs font-semibold rounded-xl cursor-pointer ${
+                  tempUnit === "imperial"
+                    ? "bg-cyan-400 text-slate-950"
+                    : "bg-[#090D17] text-slate-400 border border-[#1A263D]"
+                }`}
+              >
+                °F (Fahrenheit)
+              </button>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Reset System Trip */}
-        <div className="panel p-5 space-y-4" style={{ borderColor: "var(--border)", background: "var(--bg-panel)" }}>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs font-bold text-white">RESET FLEET TRIP ODOMETER</div>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Resets accumulated distance counter and clears waveform chart history.
-              </p>
-            </div>
-            <button
-              onClick={resetStates}
-              className="px-4 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/40 text-xs font-bold uppercase transition-all cursor-pointer"
-            >
-              RESET TRIP DATA
-            </button>
-          </div>
+      <div className="p-6 rounded-2xl border border-[#1A263D] bg-[#0F1626] flex items-center justify-between">
+        <div>
+          <h3 className="font-bold text-white text-base">Reset Fleet Odometer & Trip Logs</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Clears the current session distance and waveform cache.</p>
         </div>
+        <button
+          onClick={resetStates}
+          className="px-4 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/40 font-semibold text-xs rounded-xl cursor-pointer transition-all"
+        >
+          Reset Session Data
+        </button>
       </div>
     </div>
   );

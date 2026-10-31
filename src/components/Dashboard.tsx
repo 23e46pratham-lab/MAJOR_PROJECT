@@ -453,11 +453,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {onBackToFleet && (
             <button
               onClick={onBackToFleet}
-              className="w-full mb-3 flex items-center gap-2.5 px-3 py-2 text-xs font-mono font-bold tracking-wider uppercase border border-cyan-500/40 text-cyan-400 bg-cyan-950/30 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all cursor-pointer"
+              className="w-full mb-3 flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl border border-cyan-500/40 text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all cursor-pointer"
               title="Return to Fleet Management Overview (Esc)"
             >
               <ArrowLeft size={14} />
-              <span>← FLEET OVERVIEW</span>
+              <span>← Fleet Dashboard</span>
             </button>
           )}
           {([
@@ -529,11 +529,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {onBackToFleet && (
               <button
                 onClick={onBackToFleet}
-                className="px-3 py-1.5 text-[10px] font-bold font-mono uppercase transition-all border border-cyan-500/30 hover:border-cyan-400 bg-black/40 hover:bg-cyan-500/10 text-cyan-400 flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 py-1.5 text-xs font-semibold rounded-xl transition-all border border-cyan-500/40 hover:border-cyan-400 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 flex items-center gap-1.5 cursor-pointer shadow-sm"
                 title="Return to Fleet Management Overview (Esc)"
               >
-                <ChevronLeft size={13} />
-                <span>BACK TO FLEET</span>
+                <ChevronLeft size={14} />
+                <span>Back to Fleet</span>
               </button>
             )}
             <div>
@@ -634,7 +634,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <HealthMonitor health={healthStatus} telemetry={telemetry} history={history} />
               )}
               {activeTab === "map" && (
-                <GPSMap telemetry={telemetry} speedUnit={speedUnit} />
+                <GPSMap telemetry={telemetry} speedUnit={speedUnit} showTraveledPath={true} />
               )}
               {activeTab === "maintenance" && (
                 <MaintenanceTab
