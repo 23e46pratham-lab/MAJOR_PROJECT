@@ -1,6 +1,6 @@
 {
   "name": "AutoVue",
-  "description": "A real-time vehicle telemetry dashboard with driver behavior analysis, mileage tracking, and ML-based health monitoring.",
+  "description": "Enterprise vehicle fleet management portal with real-time OBD-II ECU telemetry, XGBoost driver behavior scoring, and LSTM autoencoder predictive maintenance.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

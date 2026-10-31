@@ -9,16 +9,17 @@ import {
   Activity, Gauge, AlertTriangle, User, Server,
   Thermometer, Wind, Zap, Loader2,
   LayoutDashboard, Wrench, Radio, MapPin, Navigation2,
-  ChevronRight, ChevronDown, ChevronUp, Power, Database, Cpu, Eye,
+  ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Power, Database, Cpu, Eye,
   TrendingUp, AlertCircle, CheckCircle, Settings, Sliders,
   Fuel, Clock, Shield, BarChart3,
-  Wifi, WifiOff, RefreshCw, Bell, BellOff, Sun, Moon, Volume2
+  Wifi, WifiOff, RefreshCw, Bell, BellOff, Sun, Moon, Volume2, ArrowLeft
 } from "lucide-react";
 import {
   TelemetryData, DriverBehavior, HealthStatus,
   ServiceCompanyDetails, RegisteredIssue,
   DriverMLResult, HealthMLResult, FuelMLResult, MLInference
 } from "../types";
+import { LiveTelemetryState } from "../services/useLiveTelemetry";
 import {
   MaintenanceScheduleItem,
   fetchMaintenanceSchedule,
@@ -37,6 +38,17 @@ import { HealthMonitor } from "./HealthMonitor";
 import { LiveChart } from "./LiveChart";
 import { GPSMap } from "./GPSMap";
 
+export interface DashboardProps {
+  onBackToFleet?: () => void;
+  sharedState?: LiveTelemetryState;
+  vehicleInfo?: {
+    id: string;
+    model: string;
+    plate: string;
+    driverName: string;
+  };
+}
+
 type Tab = "overview" | "telemetry" | "diagnostics" | "map" | "maintenance" | "settings";
 
 // ─── DATA SOURCE HOOK ──────────────────────────────────────────
@@ -48,8 +60,13 @@ function useDataSource() {
 }
 
 // ─── MAIN DASHBOARD ───────────────────────────────────────────
-export const Dashboard: React.FC = () => {
-  const [telemetry, setTelemetry] = useState<TelemetryData>(() =>
+export const Dashboard: React.FC<DashboardProps> = ({
+  onBackToFleet,
+  sharedState,
+  vehicleInfo,
+}) => {
+  // Local fallback states if sharedState not provided
+  const [localTelemetry, setLocalTelemetry] = useState<TelemetryData>(() =>
     mapSimulatedDataToTelemetry({
       rpm: 800,
       vss: 0,
@@ -64,30 +81,48 @@ export const Dashboard: React.FC = () => {
     })
   );
 
-  const [history, setHistory] = useState<TelemetryData[]>([]);
+  const [localHistory, setLocalHistory] = useState<TelemetryData[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
-  const [tripTime, setTripTime] = useState(0);
-  const [totalDistance, setTotalDistance] = useState(0);
+  const [localTripTime, setLocalTripTime] = useState(0);
+  const [localTotalDistance, setLocalTotalDistance] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
+  const [localIsBackendHealthy, setLocalIsBackendHealthy] = useState<boolean | null>(null);
 
-  const [speedUnit, setSpeedUnit] = useState<"metric" | "imperial">(() => {
+  const [localSpeedUnit, setLocalSpeedUnit] = useState<"metric" | "imperial">(() => {
     return (localStorage.getItem("obd_speed_unit") as "metric" | "imperial") || "metric";
   });
-  const [tempUnit, setTempUnit] = useState<"metric" | "imperial">(() => {
+  const [localTempUnit, setLocalTempUnit] = useState<"metric" | "imperial">(() => {
     return (localStorage.getItem("obd_temp_unit") as "metric" | "imperial") || "metric";
   });
 
-  useEffect(() => {
-    localStorage.setItem("obd_speed_unit", speedUnit);
-  }, [speedUnit]);
+  const speedUnit = sharedState ? sharedState.speedUnit : localSpeedUnit;
+  const setSpeedUnit = sharedState ? sharedState.setSpeedUnit : setLocalSpeedUnit;
+  const tempUnit = sharedState ? sharedState.tempUnit : localTempUnit;
+  const setTempUnit = sharedState ? sharedState.setTempUnit : setLocalTempUnit;
+
+  const telemetry = sharedState ? sharedState.telemetry : localTelemetry;
+  const setTelemetry = setLocalTelemetry;
+  const history = sharedState ? sharedState.history : localHistory;
+  const setHistory = setLocalHistory;
+  const tripTime = sharedState ? sharedState.tripTime : localTripTime;
+  const setTripTime = setLocalTripTime;
+  const totalDistance = sharedState ? sharedState.totalDistance : localTotalDistance;
+  const setTotalDistance = setLocalTotalDistance;
 
   useEffect(() => {
-    localStorage.setItem("obd_temp_unit", tempUnit);
-  }, [tempUnit]);
+    if (!sharedState) {
+      localStorage.setItem("obd_speed_unit", speedUnit);
+    }
+  }, [speedUnit, sharedState]);
+
+  useEffect(() => {
+    if (!sharedState) {
+      localStorage.setItem("obd_temp_unit", tempUnit);
+    }
+  }, [tempUnit, sharedState]);
 
   // Maintenance state (kept intact as requested)
-  const [serviceCompany, setServiceCompany] = useState<ServiceCompanyDetails>(() => {
+  const [localServiceCompany, setLocalServiceCompany] = useState<ServiceCompanyDetails>(() => {
     try {
       const stored = localStorage.getItem("obd_service_company");
       if (stored) return JSON.parse(stored);
@@ -100,7 +135,7 @@ export const Dashboard: React.FC = () => {
     };
   });
 
-  const [registeredIssues, setRegisteredIssues] = useState<RegisteredIssue[]>(() => {
+  const [localRegisteredIssues, setLocalRegisteredIssues] = useState<RegisteredIssue[]>(() => {
     try {
       const stored = localStorage.getItem("obd_registered_issues");
       if (stored) return JSON.parse(stored);
@@ -108,47 +143,45 @@ export const Dashboard: React.FC = () => {
     return [];
   });
 
-  const [telegramToken, setTelegramToken] = useState<string>(() => {
+  const [localTelegramToken, setLocalTelegramToken] = useState<string>(() => {
     return localStorage.getItem("obd_telegram_token") || "";
   });
-  const [telegramChatId, setTelegramChatId] = useState<string>(() => {
+  const [localTelegramChatId, setLocalTelegramChatId] = useState<string>(() => {
     return localStorage.getItem("obd_telegram_chat_id") || "";
   });
-  const [telegramEnabled, setTelegramEnabled] = useState<boolean>(() => {
+  const [localTelegramEnabled, setLocalTelegramEnabled] = useState<boolean>(() => {
     return localStorage.getItem("obd_telegram_enabled") === "true";
   });
 
-  useEffect(() => {
-    localStorage.setItem("obd_service_company", JSON.stringify(serviceCompany));
-  }, [serviceCompany]);
+  const serviceCompany = sharedState ? sharedState.serviceCompany : localServiceCompany;
+  const setServiceCompany = sharedState ? sharedState.setServiceCompany : setLocalServiceCompany;
+  const registeredIssues = sharedState ? sharedState.registeredIssues : localRegisteredIssues;
+  const setRegisteredIssues = sharedState ? sharedState.setRegisteredIssues : setLocalRegisteredIssues;
+  const telegramToken = sharedState ? sharedState.telegramToken : localTelegramToken;
+  const setTelegramToken = sharedState ? sharedState.setTelegramToken : setLocalTelegramToken;
+  const telegramChatId = sharedState ? sharedState.telegramChatId : localTelegramChatId;
+  const setTelegramChatId = sharedState ? sharedState.setTelegramChatId : setLocalTelegramChatId;
+  const telegramEnabled = sharedState ? sharedState.telegramEnabled : localTelegramEnabled;
+  const setTelegramEnabled = sharedState ? sharedState.setTelegramEnabled : setLocalTelegramEnabled;
 
-  useEffect(() => {
-    localStorage.setItem("obd_registered_issues", JSON.stringify(registeredIssues));
-  }, [registeredIssues]);
+  const [localSavedUrl, setLocalSavedUrl] = useState(getApiBaseUrl());
+  const [localTempUrl, setLocalTempUrl] = useState(getApiBaseUrl());
 
-  useEffect(() => {
-    localStorage.setItem("obd_telegram_token", telegramToken);
-  }, [telegramToken]);
-
-  useEffect(() => {
-    localStorage.setItem("obd_telegram_chat_id", telegramChatId);
-  }, [telegramChatId]);
-
-  useEffect(() => {
-    localStorage.setItem("obd_telegram_enabled", String(telegramEnabled));
-  }, [telegramEnabled]);
-
-  const [savedUrl, setSavedUrl] = useState(getApiBaseUrl());
-  const [tempUrl, setTempUrl] = useState(getApiBaseUrl());
+  const savedUrl = sharedState ? sharedState.savedUrl : localSavedUrl;
+  const tempUrl = sharedState ? sharedState.tempUrl : localTempUrl;
+  const setTempUrl = sharedState ? sharedState.setTempUrl : setLocalTempUrl;
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
-  const { source, setSource, isConnected, setIsConnected } = useDataSource();
+  const { source, setSource, isConnected: localIsConnected, setIsConnected: setLocalIsConnected } = useDataSource();
+  const isConnected = sharedState ? sharedState.isConnected : localIsConnected;
+  const isBackendHealthy = sharedState ? sharedState.isBackendHealthy : localIsBackendHealthy;
+
   const tripStartRef = useRef(Date.now());
 
-  const resetStates = useCallback(() => {
+  const localResetStates = useCallback(() => {
     const zeroed = mapSimulatedDataToTelemetry({
       rpm: 0,
       vss: 0,
@@ -158,42 +191,61 @@ export const Dashboard: React.FC = () => {
       intake_air_temp: 20,
       dtcs: [],
     });
-    setTelemetry(zeroed);
-    setHistory([]);
-    setTripTime(0);
-    setTotalDistance(0);
+    setLocalTelemetry(zeroed);
+    setLocalHistory([]);
+    setLocalTripTime(0);
+    setLocalTotalDistance(0);
     tripStartRef.current = Date.now();
   }, []);
 
-  const handleSaveUrl = () => {
-    setApiBaseUrl(tempUrl);
-    setSavedUrl(tempUrl);
-    resetStates();
+  const resetStates = sharedState ? sharedState.resetStates : localResetStates;
+
+  const localHandleSaveUrl = () => {
+    setApiBaseUrl(localTempUrl);
+    setLocalSavedUrl(localTempUrl);
+    localResetStates();
   };
 
-  // Check backend health periodically
+  const handleSaveUrl = sharedState ? sharedState.handleSaveUrl : localHandleSaveUrl;
+
+  // Listen for Escape key to return to fleet portal
   useEffect(() => {
+    if (!onBackToFleet) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onBackToFleet();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onBackToFleet]);
+
+  // Check backend health periodically (standalone mode only)
+  useEffect(() => {
+    if (sharedState) return;
     const check = async () => {
       try {
         const healthy = await checkBackendHealth();
-        setIsBackendHealthy(healthy);
+        setLocalIsBackendHealthy(healthy);
       } catch {
-        setIsBackendHealthy(false);
+        setLocalIsBackendHealthy(false);
       }
     };
     check();
     const interval = setInterval(check, 10000);
     return () => clearInterval(interval);
-  }, [savedUrl]);
+  }, [savedUrl, sharedState]);
 
-  // Trip timer
+  // Trip timer (standalone mode only)
   useEffect(() => {
-    const id = setInterval(() => setTripTime(Math.floor((Date.now() - tripStartRef.current) / 1000)), 1000);
+    if (sharedState) return;
+    const id = setInterval(() => setLocalTripTime(Math.floor((Date.now() - tripStartRef.current) / 1000)), 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [sharedState]);
 
-  // Telemetry loop — Live WebSocket from FastAPI backend + HTTP polling fallback
+  // Telemetry loop — Live WebSocket from FastAPI backend + HTTP polling fallback (standalone mode only)
   useEffect(() => {
+    if (sharedState) return;
     let ws: WebSocket | null = null;
     let reconnectTimeout: any = null;
     let pollInterval: any = null;
@@ -207,14 +259,14 @@ export const Dashboard: React.FC = () => {
         try {
           const res = await getLiveData();
           const data = mapSimulatedDataToTelemetry(res);
-          setTelemetry(data);
-          setHistory((h) => [...h.slice(-120), data]);
+          setLocalTelemetry(data);
+          setLocalHistory((h) => [...h.slice(-120), data]);
           if (data.vss > 0) {
-            setTotalDistance((d) => d + data.vss / 3600);
+            setLocalTotalDistance((d) => d + data.vss / 3600);
           }
-          setIsConnected(true);
+          setLocalIsConnected(true);
         } catch {
-          setIsConnected(false);
+          setLocalIsConnected(false);
         }
       }, 1000);
     };
@@ -227,7 +279,7 @@ export const Dashboard: React.FC = () => {
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-          setIsConnected(true);
+          setLocalIsConnected(true);
           usePolling = false;
           if (pollInterval) {
             clearInterval(pollInterval);
@@ -239,10 +291,10 @@ export const Dashboard: React.FC = () => {
           try {
             const payload = JSON.parse(event.data);
             const data = mapSimulatedDataToTelemetry(payload);
-            setTelemetry(data);
-            setHistory((h) => [...h.slice(-120), data]);
+            setLocalTelemetry(data);
+            setLocalHistory((h) => [...h.slice(-120), data]);
             if (data.vss > 0) {
-              setTotalDistance((d) => d + data.vss / 3600);
+              setLocalTotalDistance((d) => d + data.vss / 3600);
             }
           } catch (err) {
             console.error("[WebSocket] Parse error:", err);
@@ -284,9 +336,9 @@ export const Dashboard: React.FC = () => {
       }
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (pollInterval) clearInterval(pollInterval);
-      setIsConnected(false);
+      setLocalIsConnected(false);
     };
-  }, [savedUrl, setIsConnected]);
+  }, [savedUrl, sharedState, setLocalIsConnected]);
 
   // Health Status object derived from real LSTM Autoencoder API
   const healthStatus: HealthStatus = useMemo(() => {
@@ -350,6 +402,20 @@ export const Dashboard: React.FC = () => {
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-deep)", fontFamily: "Barlow, sans-serif" }}>
       {/* ── LEFT SIDEBAR ────────────────────────────── */}
       <aside className="flex flex-col w-56 border-r relative z-20 shrink-0" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
+        {/* Back to Fleet Portal Button */}
+        {onBackToFleet && (
+          <div className="p-2.5 border-b" style={{ borderColor: "var(--border)", background: "rgba(0, 212, 255, 0.05)" }}>
+            <button
+              onClick={onBackToFleet}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 text-[10px] font-bold font-mono uppercase transition-all border border-cyan-500/40 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 cursor-pointer shadow-[0_0_10px_rgba(0,212,255,0.15)]"
+              title="Return to Fleet Management Overview (Esc)"
+            >
+              <ChevronLeft size={14} />
+              <span>FLEET OVERVIEW</span>
+            </button>
+          </div>
+        )}
+
         {/* Logo */}
         <div className="px-4 py-4 border-b" style={{ borderColor: "var(--border)" }}>
           <div className="flex items-center gap-3">
@@ -384,6 +450,16 @@ export const Dashboard: React.FC = () => {
 
         {/* Nav */}
         <nav className="flex-1 py-3 px-2 space-y-1">
+          {onBackToFleet && (
+            <button
+              onClick={onBackToFleet}
+              className="w-full mb-3 flex items-center gap-2.5 px-3 py-2 text-xs font-mono font-bold tracking-wider uppercase border border-cyan-500/40 text-cyan-400 bg-cyan-950/30 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all cursor-pointer"
+              title="Return to Fleet Management Overview (Esc)"
+            >
+              <ArrowLeft size={14} />
+              <span>← FLEET OVERVIEW</span>
+            </button>
+          )}
           {([
             { id: "overview", icon: LayoutDashboard, label: "Overview" },
             { id: "telemetry", icon: Activity, label: "Telemetry" },
@@ -449,16 +525,32 @@ export const Dashboard: React.FC = () => {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
         <header className="flex items-center justify-between px-6 py-3 border-b shrink-0" style={{ background: "var(--bg-panel)", borderColor: "var(--border)" }}>
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            {onBackToFleet && (
+              <button
+                onClick={onBackToFleet}
+                className="px-3 py-1.5 text-[10px] font-bold font-mono uppercase transition-all border border-cyan-500/30 hover:border-cyan-400 bg-black/40 hover:bg-cyan-500/10 text-cyan-400 flex items-center gap-1.5 cursor-pointer"
+                title="Return to Fleet Management Overview (Esc)"
+              >
+                <ChevronLeft size={13} />
+                <span>BACK TO FLEET</span>
+              </button>
+            )}
             <div>
-              <div className="hud-display text-lg font-bold uppercase tracking-wider" style={{ color: "var(--text-primary)" }}>
-                {activeTab === "overview" && "System Overview"}
-                {activeTab === "telemetry" && "Live Telemetry & Waveforms"}
-                {activeTab === "diagnostics" && "LSTM Autoencoder Anomaly Diagnostics"}
-                {activeTab === "map" && "GPS Route Tracking & Telemetry Map"}
-                {activeTab === "simulator" && "Simulator Playback & Sensor Override Dials"}
-                {activeTab === "maintenance" && "Predictive Maintenance Logs"}
-                {activeTab === "settings" && "System Settings"}
+              <div className="flex items-center gap-3">
+                <span className="hud-display text-lg font-bold uppercase tracking-wider" style={{ color: "var(--text-primary)" }}>
+                  {activeTab === "overview" && "System Overview"}
+                  {activeTab === "telemetry" && "Live Telemetry & Waveforms"}
+                  {activeTab === "diagnostics" && "LSTM Autoencoder Anomaly Diagnostics"}
+                  {activeTab === "map" && "GPS Route Tracking & Telemetry Map"}
+                  {activeTab === "maintenance" && "Predictive Maintenance Logs"}
+                  {activeTab === "settings" && "System Settings"}
+                </span>
+                {vehicleInfo && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 border border-cyan-500/30 text-cyan-300 bg-cyan-500/10">
+                    UNIT: {vehicleInfo.model} ({vehicleInfo.plate})
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <motion.div className="w-1.5 h-1.5 rounded-full" style={{ background: bColor }}
